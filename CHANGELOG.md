@@ -19,8 +19,38 @@ suites and an adversarial review before it was pushed.
   characters and phrases delivered as JSON escapes. Manifest
   descriptions join the opt-in `--llm` lane as a labelled
   prose surface. Two rules added (61 → 63). Fixtures:
-  `run_feat_manifest_tests.py` (28 cases) plus samples
+  `run_feat_manifest_tests.py` (40 cases) plus samples
   `samples/bad/mcp-poisoned` and `samples/caution/mcp-steering`.
+- **Change watch (`--pin` / `--check-pin`, the rug-pull
+  guard).** `--pin PINFILE` scans a folder and writes a
+  fingerprint: a hash of every entry in the folder — regular
+  files of every type (not only the ones the scanner reads),
+  directories, special files, file permission bits, and
+  symlinks by target and by the content behind the link —
+  plus the verdict, the findings, and the rule-set version.
+  Nothing is skipped, including `.git` and `__pycache__`.
+  `--check-pin PINFILE` re-scans and reports a plain diff —
+  entries added, removed, or modified; findings added or
+  removed; the verdict then and now — with check-specific
+  exit codes (0 = no entry changed, 1 = files changed but
+  the scan result is identical, 2 = the scan result
+  changed, 3 = the pin cannot be used). Findings are
+  identified by rule, file, and a hash of their evidence
+  text — not by line number — so a comment inserted above a
+  flagged line is a files-changed, not a scan-result
+  change. A rule-set version difference is reported as
+  "the scanner changed, not the skill" and never fails the
+  check on its own. Pin files are plain JSON
+  (`skillscan-pin/1`), schema-validated on load; a corrupt,
+  foreign, or damaged pin fails visibly with exit 3, never
+  a traceback, and a folder that cannot be read fails the
+  same way rather than reporting "no changes". Known
+  limits: an edit that leaves a finding's rule, evidence,
+  and count untouched on an already-flagged file lands at
+  exit 1 with the file named, and runtime state a skill
+  writes inside its own folder shows as changed entries.
+  No rules added. Fixtures: `run_feat_pinwatch_tests.py`
+  (40 cases).
 
 ## v0.7.1 — 2026-11-14
 

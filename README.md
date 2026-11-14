@@ -66,6 +66,8 @@ python3 -m skillscan <path-to-skill-folder> --format sarif # SARIF 2.1.0 (toolch
 python3 -m skillscan https://github.com/<owner>/<repo>   # clone + scan a repo
 python3 skillscan.py <path-to-skill-folder>               # shim, same thing
 python3 -m skillscan <path-to-skill-folder> --llm         # + optional LLM review (see Modes)
+python3 -m skillscan <path-to-skill-folder> --pin pin.json      # fingerprint it (see Change watch)
+python3 -m skillscan <path-to-skill-folder> --check-pin pin.json # later: what changed?
 ```
 
 Repo URLs: only `https://github.com/<owner>/<repo>` is accepted.
@@ -118,6 +120,42 @@ cannot be a clean PASS (`SCAN_INCOMPLETE`).
 | 3         | —        | Usage / IO error: the scanner could not run (bad path, bad flags). Deliberately distinct from BLOCK. |
 
 The exit codes make SkillScan usable as a CI / install-time gate.
+
+### Change watch (pin / check-pin)
+
+A skill can be safe on the day you install it and silently
+different a week later. `--pin` records a fingerprint of a
+scanned folder — a hash of every entry, the verdict, the
+findings, and the rule-set version — and `--check-pin`
+re-scans and reports a plain diff: which entries were added,
+removed, or modified, and whether the scan result changed.
+`--check-pin` exit codes: **0** = no entry changed (a
+rule-set version difference alone is reported, not failed —
+the scanner changed, not the skill), **1** = files changed
+but the scan result (verdict + findings) is identical,
+**2** = the scan result changed, **3** = the pin cannot be
+used. The fingerprint covers *every* entry in the folder —
+regular files of every type (not only the ones the scanner
+reads, because a change can arrive as a file the scanner
+does not parse), directories, special files, the
+permission bits on files, and symlinks (both the link
+target and, when it resolves to a regular file of up to
+512 MB, the content behind the link — that content is what
+an agent would actually read; larger targets are recorded
+by target and resolved path only). Nothing
+is skipped, not even `.git` or `__pycache__`. Findings are
+compared by what they say, not by line number: inserting a
+comment above a flagged line is a files-changed (1), not a
+scan-result change. Two honest limits: an edit that changes
+neither a finding's rule, evidence, nor count on an
+already-flagged file (for example swapping the host on an
+already-flagged network line) also lands at exit 1, with the
+file named — read the named files; and a skill that writes
+runtime state (logs, caches) inside its own folder will show
+those as changed entries. Keep pins *outside* the folder
+they fingerprint: a pin inside it can be rewritten by the
+same hand that changed the folder, and `--pin` warns when
+asked to write one there.
 
 ## Modes: offline (default) and LLM review (opt-in)
 
@@ -240,9 +278,10 @@ for v0.7.1, 2026-11-14):
   Landed since, not yet in a release: MCP tool-description
   scanning (manifest descriptions are checked for poisoning
   and steering, and join the `--llm` lane as a labelled
-  surface). Still to come in the programme: a change-watch
-  (pin and re-check) mode, a combination scan across the
-  skills in a folder, and per-project exceptions with
+  surface) and the change watch (`--pin` / `--check-pin`:
+  fingerprint a folder, later diff it — the rug-pull guard).
+  Still to come in the programme: a combination scan across
+  the skills in a folder, and per-project exceptions with
   reasons. Each item lands only after the full test suites
   and an adversarial review pass.
 - **The LLM-lane improvement programme is in progress.** Two
@@ -567,10 +606,10 @@ scanner now reads what a skill's SKILL.md claims about itself
 and reports where the scan disagrees.
 
 On `main`, not yet in a release: MCP tool-description
-scanning (63 deterministic rules), with the rest of the
-feature programme — change watch, combination scan,
-exceptions with reasons — tracked in the "What remains open"
-block above. Expect false positives and false negatives; the
+scanning (63 deterministic rules) and the change watch
+(`--pin` / `--check-pin`), with the rest of the feature
+programme — combination scan, exceptions with reasons —
+tracked in the "What remains open" block above. Expect false positives and false negatives; the
 rule set and corpus are a starting point, not a finished
 product. Issues and new evasion samples are welcome — a
 mutation that evades SkillScan is a valuable contribution.

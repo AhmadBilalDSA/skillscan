@@ -1320,23 +1320,71 @@ credential-store target (API tools legitimately discuss the
 user's key); declarative descriptions of a tool's own function
 never fire; descriptions telling the USER how to use the tool
 are not steering. Evidence: `run_feat_manifest_tests.py`
-(28 cases) and samples `samples/bad/mcp-poisoned` (BLOCK) and
+(40 cases) and samples `samples/bad/mcp-poisoned` (BLOCK) and
 `samples/caution/mcp-steering` (CAUTION). Matching discipline
-(adversarially reviewed; the naive version fired on legitimate
-manifests): anchors combine only within a sentence; negated
-sentences ("never reads your .env") are assurances, quoted
-text is not an instruction, and sentences routing through the
-user (consent, user-provided files, the user's own storage)
-do not fire the credential shapes. Honest limits: only the
+(adversarially reviewed twice; the naive version fired on
+legitimate manifests): the credential conjunction is evaluated
+per comma clause within a sentence, a verb completes the shape
+only when it governs the target, negation applies per verb
+occurrence ("never include the user's private key" is an
+assurance), quoted text (ASCII or typographic) is not an
+instruction unless the text tells the agent to follow the
+quote, and consent routes the access shapes but never a send
+to an external destination. Honest limits: only the
 standard `tools` list shape (and the `result.tools`
 envelope) is read; a poisoning shape split across two
 different TOOLS in one manifest is not combined (that is the
-combination scan's territory); anchor matching reads the
-first and last windows of very long descriptions, so burial
-in the deep middle can escape; languages without a phrase
+combination scan's territory); the non-English phrase
+tripwire reads the first and last windows of very long
+descriptions (the anchor shapes read the full text);
+languages without a phrase
 file (Vietnamese, as of this writing) get no tripwire;
 findings cite the line of the description key, which is
 approximate when a manifest carries many descriptions.
+
+## Unreleased additions — change watch (pin / check-pin)
+
+Post-install substitution ("rug pull") is a lifecycle gap,
+not a content pattern: the skill was scanned and approved,
+then the folder changed. The change watch
+(`skillscan/pinwatch.py`) closes it without new rules:
+`--pin` fingerprints a scanned folder — every entry, not
+just files: regular files of every type (including types
+the scanner does not parse), directories, special files,
+permission bits, and symlinks by target text, resolved
+path, and the content behind the link when it resolves to
+a file (targets over 512 MB are recorded without the
+content hash); nothing
+is skipped, including `.git` and `__pycache__` — plus the
+verdict, the findings (identified by rule, file, and a hash
+of their evidence text, so a pure line move is not a
+finding change), and the rule-set version. `--check-pin`
+re-scans and diffs. The check separates three questions a
+plain re-scan cannot: did any entry change, did the
+scanner's view change, and did the scanner itself change
+(a rule-set version difference is reported, never failed
+on its own). Pins are schema-validated on load, and a
+folder that cannot be walked is an error, never a "no
+changes". Evidence: `run_feat_pinwatch_tests.py` (40
+cases): unchanged, silently-modified (a network call added
+to a pinned PASS skill), cosmetic-only, added/removed
+files, rule-version change, corrupt/foreign/missing pins,
+a pin stored inside its own folder, an unchanged BLOCK
+skill checking clean, plus the adversarial-review fix wave:
+symlink content swaps and retargets, line-shift tolerance,
+`chmod +x`, special files, `.git/hooks` additions, symlink
+loops, eight malformed-pin shapes, folder-name mismatch,
+and render caps. Honest limits: the watch detects change,
+it does not judge it — a changed scan result still needs
+the ordinary report to interpret; an edit that leaves a
+finding's rule, evidence, and count untouched on an
+already-flagged file lands at exit 1 with the file named,
+not exit 2; runtime state a skill writes inside its own
+folder shows as changed entries; and a pin is only as
+trustworthy as where it is stored (an attacker who can
+rewrite the folder can rewrite a pin kept inside it; keep
+pins outside the skill folder for a real guarantee —
+`--pin` warns when asked to write one inside).
 
 ---
 
@@ -1344,6 +1392,6 @@ approximate when a manifest carries many descriptions.
 (`skillscan/rules.py`, `skillscan/scanner.py`, and — for the opt-in
 LLM lane — `skillscan/llm.py`) and test suites as of
 v0.7.1, with the v0.7.1 additions, the claims-check section
-and the unreleased manifest-pass section above. If a rule or a sample changes, this map must change
+and the unreleased manifest-pass and change-watch sections above. If a rule or a sample changes, this map must change
 with it — a coverage claim without a suite behind it is exactly
 the kind of thing this document exists to prevent.*

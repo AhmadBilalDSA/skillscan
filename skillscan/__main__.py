@@ -541,7 +541,43 @@ def main(argv: list[str] | None = None) -> int:
              "(default: the Groq preset, "
              "https://api.groq.com/openai/v1)",
     )
+    parser.add_argument(
+        "--pin", metavar="PINFILE", default=None,
+        help="Change watch (rug-pull guard): scan the folder and "
+             "write a fingerprint — per-file hashes, the verdict, "
+             "the findings, and the rule-set version — to PINFILE. "
+             "Re-check it later with --check-pin. Offline and "
+             "deterministic; the exit code is the scan's verdict "
+             "code, exactly as for a plain scan.",
+    )
+    parser.add_argument(
+        "--check-pin", metavar="PINFILE", default=None,
+        help="Change watch: re-scan the folder and diff it "
+             "against the fingerprint in PINFILE (made by --pin): "
+             "which files were added, removed, or modified, and "
+             "whether the scan result changed. Exit code: 0 = no "
+             "file changed, 1 = files changed but the scan result "
+             "is identical, 2 = the scan result changed, 3 = the "
+             "pin cannot be used.",
+    )
     args = parser.parse_args(argv)
+
+    if args.pin and args.check_pin:
+        print("error: --pin and --check-pin cannot be used together",
+              file=sys.stderr)
+        return 3
+    if (args.pin or args.check_pin) and args.llm:
+        print("error: --pin / --check-pin are offline-only and "
+              "cannot be combined with --llm", file=sys.stderr)
+        return 3
+    if (args.pin or args.check_pin) and _is_url(args.folder):
+        print("error: --pin / --check-pin need a local folder, "
+              "not a URL", file=sys.stderr)
+        return 3
+    if (args.pin or args.check_pin) and args.format not in ("text", "json"):
+        print("error: --pin / --check-pin support --format text or "
+              "json only", file=sys.stderr)
+        return 3
 
     clone_root: Path | None = None
     if _is_url(args.folder):
@@ -562,6 +598,59 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # never answer a folder with a traceback
             print(f"error: scan failed: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 3
+        if args.pin or args.check_pin:
+            # Change watch: a fingerprint mode wrapped around the
+            # ordinary offline scan above — the scan itself is
+            # untouched by the mode.
+            from datetime import datetime, timezone
+
+            from . import pinwatch as _pw
+
+            pin_path = Path(args.pin or args.check_pin)
+            try:
+                _pw.check_pin_path(pin_path)
+                if args.pin:
+                    if pin_path.exists():
+                        print(f"note: overwriting the existing pin at "
+                              f"{pin_path} — the old fingerprint is "
+                              "gone", file=sys.stderr)
+                    pin_resolved = _pw.resolve_quiet(pin_path)
+                    target_resolved = _pw.resolve_quiet(target)
+                    if (pin_resolved is not None
+                            and target_resolved is not None
+                            and (pin_resolved == target_resolved
+                                 or target_resolved in pin_resolved.parents)):
+                        print("note: this pin lives inside the folder "
+                              "it fingerprints — whoever can rewrite "
+                              "the folder can rewrite the pin too. "
+                              "For a real guarantee, keep pins outside "
+                              "the skill folder.", file=sys.stderr)
+                    created = datetime.now(timezone.utc).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ")
+                    pin = _pw.build_pin(target, result, pin_path, created)
+                    _pw.write_pin(pin, pin_path)
+                    if args.format == "json":
+                        print(json.dumps(pin, indent=2, sort_keys=True))
+                    else:
+                        print(f"Pinned {len(pin['files'])} entries from "
+                              f"{target} (verdict {result.verdict}) "
+                              f"-> {pin_path}")
+                    return result.exit_code
+                pin = _pw.load_pin(pin_path)
+                files = _pw.fingerprint_folder(target, exclude={pin_path})
+                diff = _pw.diff_pin(pin, result, files, target.name)
+                if args.format == "json":
+                    print(json.dumps(diff, indent=2))
+                else:
+                    print(_pw.render_diff(diff, pin_path.name))
+                return _pw.classification_exit(diff)
+            except _pw.PinError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 3
+            except RecursionError:
+                print("error: the pin file is nested too deeply to "
+                      "read; it cannot be used", file=sys.stderr)
+                return 3
         if not args.llm:
             _emit(result, args.format)
             return result.exit_code
