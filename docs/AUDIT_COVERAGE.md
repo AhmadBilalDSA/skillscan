@@ -142,8 +142,9 @@ above. Stated with the same honesty standard:
   AshAi, Nov 2026). Python `return` shapes are detected, including a
   one-hop local (`tb = traceback.format_exc()` then returning `tb`);
   logging an error and returning a plain message is the safe shape and
-  is asserted not to fire. Limit: the JS form (returning `e.stack` /
-  `e.message` from a catch block) is not detected.
+  is asserted not to fire. The JS form (returning `e.stack` /
+  `e.message` from a catch block) was the stated limit here until
+  v0.7.1 — see the v0.7.1 additions section below.
 - **Package install-time code** (PACKAGE_INSTALL_SCRIPT /
   PACKAGE_INSTALL_SCRIPT_EXEC) — npm lifecycle scripts and behaviour-
   carrying `setup.py` files run code before the tool is ever called.
@@ -1188,20 +1189,111 @@ labelled, additive second opinion, never a replacement judge.
   BLOCK+CAUTION 28.9% → 54.6%; benign false BLOCKs 0 of 280),
   and weak free-tier judges over the held-out malicious set
   (material lift under both judges; see the CHANGELOG's v0.7.0
-  entry for the numbers). One measurement remains open at this
-  release: the benign set under a weak judge, scheduled
-  2026-11-14 — the zero-false-BLOCK claim at weak-judge corpus
-  scale is therefore still pending, and this map will be
-  updated when it lands. The stub-provider suite
+  entry for the numbers). The benign set under a weak judge
+  has since been measured (2026-11-14): gemini-3.5-flash-lite
+  judged 258 of 259 held-out benign skills with 0 false
+  BLOCKs and 0 added CAUTIONs, so the zero-false-BLOCK claim
+  at weak-judge corpus scale now holds for that preset. The
+  default qwen/qwen3.8-27b preset's benign run was stopped
+  by its free-tier limit at the second call and remains
+  unmeasured at corpus scale. The stub-provider suite
   (`run_v07_tests.py`: schema discipline, grounding,
   injection-shaped prose, timeout/HTTP/key-leak paths) remains
   the regression gate for the lane's mechanics.
+
+## v0.7.1 additions — the claims check ("says vs does")
+
+Not an audit row but a new check on the skill's own honesty, built
+in a feature tree on top of v0.7.0 and released in v0.7.1. The audits
+above judge what a skill *does*; nothing in them grades whether the
+skill's description *lies about it*. The claims check extracts the
+absolute capability claims in SKILL.md ("makes no network calls",
+"read-only", "does not read your credentials") and checks each
+against the scan's findings, reporting a "Says vs does" section in
+every format:
+
+- `CLAIM_CONTRADICTED` (**caution**) — a claim contradicted by any
+  observed behaviour of the claimed class (network, credential
+  access, file write/delete, command execution, persistence).
+- `CLAIM_EXFIL_CONTRADICTION` (**block**) — a no-network or
+  no-credential claim contradicted by an exfiltration-class finding
+  (`EXFIL_COMBINATION`, `CLOUD_METADATA_EXFIL`, `TAINTED_SEND`).
+
+Discipline: conditional claims ("can optionally…", "by default")
+are disclosures, not claims; marketing phrasing is not a claim;
+claims that a skill does *more* than it does are never checked;
+quoted text and code fences are not the skill's own claims.
+Evidence: `run_feat_claims_tests.py` (34 cases: 4 must-fire, 8
+must-not-fire, 13 adversarial-review fix-wave cases, output-surface
+checks) and samples
+`samples/good/honest-local` (PASS, claims listed as matches) and
+`samples/caution/claims-understated` (CAUTION). Honest limit: the
+check can only contradict behaviour the deterministic rules can
+see — a claim about behaviour no rule covers is listed as
+"matches" on the strength of absence, which is why the section
+says "checked against the scan", not "verified".
+
+---
+
+## v0.7.1 additions — the JS/TS form of error leakage
+
+v0.7.1 adds no new rule (the count stays 59). It closes the limit
+stated in the v0.2 ERROR_INFO_LEAK entry above: the rule was
+Python-only, and the JS form — the same leak in the language most
+MCP servers are actually written in — was not detected.
+
+- **Error / environment leakage, JavaScript/TypeScript form**
+  (ERROR_INFO_LEAK, CAUTION) — inside a try/catch block or a
+  promise `.catch` handler, a value that flows OUT of the handler
+  carrying the caught error's detail now fires: a return value, an
+  HTTP response body (`res.json` / `res.send` / `reply.*`), or an
+  outbound payload (`fetch` / `axios` / `sendBeacon` / a generic
+  `.send(...)` call). The detail forms mirror the Python ones:
+  `err.stack` / `err.message` (optional chaining included),
+  `String(err)` / `err.toString()`, the bare error object in value
+  position, template-literal interpolations of any of those, and
+  one-hop locals — including aliases (`const e2 = err`) and
+  destructuring (`const { stack } = err`). Returning or sending
+  the whole `process.env` (a bare reference, a spread, or a
+  one-hop copy) fires anywhere in the file, mirroring the Python
+  return of `os.environ`; a single-property read
+  (`process.env.NODE_ENV`) does not.
+- **False-positive discipline mirrors the Python rule.** Local
+  logging — including logging the stack itself — rethrowing,
+  returning a fixed message, an `instanceof` guard choosing
+  between fixed messages, reporting only sanitised fields
+  (`err.name`, a numeric code), named error-reporting SDK calls,
+  error-formatting helpers outside any catch block, and a local
+  holding a function's result (`const out = toPublicError(err)`)
+  do not fire: a one-hop local taints only when its value
+  DIRECTLY exposes the detail, exactly as only `str(e)` /
+  `format_exc()` assignments taint in Python. Comments and
+  quoted strings are masked before matching, so prose about the
+  pattern cannot fire it. Fixtures in `run_v07fix_tests.py`
+  (19 must-fire, 13 must-not-fire cases) assert all of this. A
+  further self-red-team probe set (renamed bindings, wrapper
+  calls, multiline returns, nested catches, string-data and
+  middleware shapes) behaved as intended in 21 of 22 cases; the
+  one miss is bracket access, listed under Limits below.
+- **Limits, stated plainly.** Bracket access (`err['stack']`) is
+  not detected — property names inside quoted strings are data
+  to the mask, as elsewhere in the scanner. Error handlers
+  registered without a catch (`process.on('uncaughtException')`,
+  `window.onerror`) are out of scope: with no catch binding
+  there is no error name to trace. A payload assembled outside
+  the send call (`http.request` plus a later `req.write`) and a
+  one-hop object literal assigned across several lines can
+  evade. Template literals are treated as code throughout (the
+  inert-region helper's documented approximation), so a template
+  used as pure data that quotes a catch shape could in principle
+  fire — none was found in the benign corpus or fixtures.
 
 ---
 
 *Map compiled from the four audits above and the scanner source
 (`skillscan/rules.py`, `skillscan/scanner.py`, and — for the opt-in
 LLM lane — `skillscan/llm.py`) and test suites as of
-v0.7.0. If a rule or a sample changes, this map must change with it — a
-coverage claim without a suite behind it is exactly the kind of thing
-this document exists to prevent.*
+v0.7.1, with the v0.7.1 additions and the claims-check section
+above. If a rule or a sample changes, this map must change
+with it — a coverage claim without a suite behind it is exactly
+the kind of thing this document exists to prevent.*

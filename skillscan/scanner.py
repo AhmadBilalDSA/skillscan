@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import io
+from bisect import bisect_left
 import json
 import math
 import os
@@ -26,6 +27,7 @@ import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .claims import check_claims, extract_claims
 from .rules import LINE_RULES, RULES_BY_ID
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
@@ -103,13 +105,18 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     scanned_files: int = 0
     skipped: list[Skipped] = field(default_factory=list)
+    # Claims check ("says vs does"): ClaimCheck objects from
+    # claims.py. Empty when the skill makes no absolute claims —
+    # and then the key is absent from to_dict, so reports for
+    # claim-free skills keep their pre-feature shape exactly.
+    claims: list = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:
         return VERDICT_EXIT_CODES[self.verdict]
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "target": self.target,
             "verdict": self.verdict,
             "exit_code": self.exit_code,
@@ -132,6 +139,9 @@ class ScanResult:
                 for f in self.findings
             ],
         }
+        if self.claims:
+            data["claims_check"] = [c.to_dict() for c in self.claims]
+        return data
 
 
 # --------------------------------------------------------------------------
@@ -3165,6 +3175,368 @@ def _download_and_run_findings(rel: str, text: str, lines: list[str],
             if (req[2:] if req.startswith("./") else req) in written:
                 fire(m.start())
                 return
+
+
+# --- JS/TS error / environment leakage (ERROR_INFO_LEAK, JS side) --------
+#
+# The JavaScript/TypeScript analogue of the Python AST check above:
+# inside a catch block (try/catch, or a promise .catch handler), a
+# value that flows OUT of the handler — a return value, an HTTP
+# response body (res.json / res.send / reply.*), or an outbound
+# payload (fetch / axios / sendBeacon / a generic .send call) —
+# carrying the caught error's detail ships internal paths, messages
+# and stack text to whoever is on the other side. The detail forms
+# mirror the Python ones: err.stack / err.message (the format_exc /
+# str(e) analogues, optional chaining included), String(err) /
+# err.toString(), the bare error object in value position, and
+# one-hop locals assigned from those (`const detail = err.stack;
+# return { error: detail }`, destructuring included: `const
+# { stack } = err`). A one-hop local only taints when its value
+# DIRECTLY exposes the detail — a local holding a function's result
+# (`const out = sanitise(err)`) does not taint, exactly as in the
+# Python check, where only str(e) / format_exc() assignments taint;
+# passing the error itself to a call in the return expression
+# (`return wrap(err)`) still fires there, as in Python. Returning
+# the whole environment (process.env, whole-object — a bare
+# reference, a spread, or a one-hop copy) fires anywhere in the
+# file, exactly like a Python return of os.environ. Local logging
+# (console.*, logger.*), rethrowing, returning a fixed message, and
+# reporting only sanitised fields (err.name, a numeric code) do NOT
+# match: only return / response / send statements are inspected,
+# and only inside a catch context (the env form excepted).
+
+_JS_CATCH_RE = re.compile(
+    r"\bcatch\s*\(\s*([A-Za-z_$][\w$]*)\s*(?::\s*[^)]*?)?\)\s*\{")
+_JS_PROMISE_CATCH_RE = re.compile(
+    r"\.catch\s*\(\s*(?:async\s+)?"
+    r"(?:\(\s*([A-Za-z_$][\w$]*)\s*(?::\s*[^)]*?)?\)"
+    r"|([A-Za-z_$][\w$]*))\s*=>\s*")
+_JS_RETURN_RE = re.compile(r"\breturn\b")
+_JS_SEND_CALL_RE = re.compile(
+    r"\b(?:res|reply|response)\s*\.\s*"
+    r"(?:status\s*\([^()]*\)\s*\.\s*)?(?:json|send|end)\s*\("
+    r"|\baxios\s*(?:\.\s*(?:post|put|patch|request|get|delete)\s*)?\("
+    r"|\b(?:fetch|sendBeacon)\s*\("
+    r"|\.\s*send\s*\(")
+_JS_ASSIGN_RE = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*=(?![=>])\s*([^;\n]+)")
+_JS_DESTRUCTURE_RE = re.compile(
+    r"\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*([A-Za-z_$][\w$]*)\b")
+_JS_ENV_RE = re.compile(r"\bprocess\s*\.\s*env\b")
+
+
+def _js_masked_text(lines: list[str], comment_spans, string_spans) -> str:
+    """Comment-blanked source with ' and " string contents blanked
+    too (positions preserved). Template literals stay visible: their
+    ${...} interpolations are code, and that is where a stack often
+    travels. A catch block or err.stack written inside a comment or
+    a quoted string is data, not behaviour, and disappears here."""
+    blank = dict(comment_spans or {})
+    for ln, spans in (string_spans or {}).items():
+        if ln < 1 or ln > len(lines):
+            continue
+        raw = lines[ln - 1]
+        for lo, hi in spans:
+            if 0 <= lo < len(raw) and raw[lo] in ("'", '"'):
+                blank.setdefault(ln, []).append((lo, hi))
+    return "\n".join(_blank_spans(lines, blank))
+
+
+def _js_block_span(text: str, open_pos: int) -> tuple[int, int]:
+    """(start, end) of the brace block whose '{' is at open_pos;
+    end is just past the matching '}'. Bounded; unbalanced input
+    yields the rest of the window. Braces inside comments and
+    quoted strings are already blanked in the masked text;
+    template-literal braces are near-balanced (${...} pairs), an
+    accepted approximation."""
+    depth = 0
+    limit = min(len(text), open_pos + 20000)
+    i = open_pos
+    while i < limit:
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return open_pos, i + 1
+        i += 1
+    return open_pos, limit
+
+
+def _js_statement(text: str, start: int, limit_end: int) -> str:
+    """The statement fragment at `start`: runs to the terminating
+    ';', or stops at a newline once brackets balance (ASI style),
+    bounded by limit_end and 800 chars."""
+    depth = 0
+    seen = False
+    i = start
+    hard = min(limit_end, start + 800)
+    while i < hard:
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == ";" and depth <= 0:
+            return text[start:i]
+        elif ch == "\n" and seen and depth <= 0:
+            return text[start:i]
+        if not ch.isspace():
+            seen = True
+        i += 1
+    return text[start:hard]
+
+
+def _js_call_fragment(text: str, open_paren: int, limit_end: int) -> str:
+    """The argument text of the call whose '(' is at open_paren
+    (paren-counted; quoted-string parens are already blanked in the
+    masked text)."""
+    depth = 0
+    i = open_paren
+    hard = min(limit_end, open_paren + 800)
+    while i < hard:
+        ch = text[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_paren + 1:i]
+        i += 1
+    return text[open_paren + 1:hard]
+
+
+def _js_bare_value(fragment: str, start: int, end: int) -> bool:
+    """True when the identifier at fragment[start:end] stands in
+    value position: an object value, array element, call argument,
+    spread, template interpolation, or the returned expression
+    itself — not a property of something else, not a condition or
+    operand (`err instanceof Error`, `err.code`, `err()` do not
+    qualify; those are the benign guard shapes)."""
+    j = start - 1
+    while j >= 0 and fragment[j] in " \t\r\n":
+        j -= 1
+    prev = fragment[j] if j >= 0 else ""
+    spread = fragment[max(0, start - 3):start].endswith("...")
+    if prev == "." and not spread:
+        return False  # someone else's property (spread excepted)
+    if not spread and prev and prev not in "{([,:=" and \
+            not fragment[:start].rstrip().endswith(("return", "=>")):
+        return False
+    k = end
+    while k < len(fragment) and fragment[k] in " \t\r\n":
+        k += 1
+    nxt = fragment[k] if k < len(fragment) else ""
+    return nxt == "" or nxt in ",)}];"
+
+
+def _js_detail_form(fragment: str, names: set, leak_vars: set) -> bool:
+    """True when `fragment` directly exposes error detail: a
+    .stack / .message read (optional chaining included), a
+    .toString() call, or String(name) — the extraction forms, with
+    no function-call boundary in between."""
+    for n in names | leak_vars:
+        en = re.escape(n)
+        if re.search(r"\b" + en + r"\s*(?:\?\s*)?\.\s*"
+                     r"(?:stack|message)\b", fragment):
+            return True
+        if re.search(r"\b" + en + r"\s*(?:\?\s*)?\.\s*toString\s*\(",
+                     fragment):
+            return True
+    for n in names:
+        if re.search(r"\bString\s*\(\s*" + re.escape(n) + r"\s*\)",
+                     fragment):
+            return True
+    return False
+
+
+def _js_leak_in(fragment: str, names: set, leak_vars: set) -> bool:
+    """True when `fragment` exposes error detail bound to any name
+    in `names` (caught errors in scope) or `leak_vars` (one-hop
+    locals and whole-env copies): a direct extraction form, or the
+    name itself standing in value position."""
+    if _js_detail_form(fragment, names, leak_vars):
+        return True
+    for n in names | leak_vars:
+        for m in re.finditer(r"\b" + re.escape(n) + r"\b", fragment):
+            if _js_bare_value(fragment, m.start(), m.end()):
+                return True
+    return False
+
+
+def _js_leak_direct(fragment: str, names: set, leak_vars: set) -> bool:
+    """The one-hop assignment test: True when an assigned VALUE
+    directly exposes error detail, so the local holding it taints.
+    Stricter than _js_leak_in — a bare name counts only as the
+    whole value (an alias), a template interpolation, or an
+    object/array element; a bare name passed INTO a call
+    (`sanitise(err)`) does not taint the result, mirroring the
+    Python check, where only str(e) / format_exc() assignments
+    taint a local."""
+    if _js_detail_form(fragment, names, leak_vars):
+        return True
+    core = fragment.strip()
+    while core.startswith("(") and core.endswith(")"):
+        core = core[1:-1].strip()
+    if core in (names | leak_vars):
+        return True
+    for n in names | leak_vars:
+        for m in re.finditer(r"\b" + re.escape(n) + r"\b", fragment):
+            if fragment[:m.start()].count("(") > \
+                    fragment[:m.start()].count(")"):
+                continue  # inside a call's arguments — not direct
+            j = m.start() - 1
+            while j >= 0 and fragment[j] in " \t\r\n":
+                j -= 1
+            prev = fragment[j] if j >= 0 else ""
+            if prev in "{[,:=":
+                return True
+    return False
+
+
+def _js_env_in(fragment: str, env_vars: set) -> bool:
+    """True when `fragment` hands over the whole environment: a
+    process.env reference that is not a property read (process.env
+    .NODE_ENV is ordinary configuration), or a bare one-hop copy."""
+    for m in _JS_ENV_RE.finditer(fragment):
+        k = m.end()
+        while k < len(fragment) and fragment[k] in " \t":
+            k += 1
+        if k < len(fragment) and fragment[k] in ".[?":
+            continue  # property / element access reads one value
+        return True
+    for n in env_vars:
+        for m in re.finditer(r"\b" + re.escape(n) + r"\b", fragment):
+            if _js_bare_value(fragment, m.start(), m.end()):
+                return True
+    return False
+
+
+def _js_error_leak_findings(rel: str, lines: list[str], add,
+                            comment_spans, string_spans) -> None:
+    """JS/TS ERROR_INFO_LEAK: see the section header above. Works
+    on the masked text (comments and quoted strings blanked), so
+    prose about the pattern cannot fire it."""
+    masked = _js_masked_text(lines, comment_spans, string_spans)
+    if "catch" not in masked and "process" not in masked:
+        return
+
+    def line_of(pos: int) -> int:
+        return masked[:pos].count("\n") + 1
+
+    def fire(pos: int) -> None:
+        line_no = line_of(pos)
+        add("ERROR_INFO_LEAK", rel, line_no,
+            lines[line_no - 1] if 0 < line_no <= len(lines) else "")
+
+    # Statements whose value leaves the handler: returns and sends.
+    # (kind, start, fragment) — the fragment is what gets inspected.
+    statements: list[tuple[int, str]] = []
+    for m in _JS_RETURN_RE.finditer(masked):
+        statements.append(
+            (m.start(), _js_statement(masked, m.end(), len(masked))))
+    for m in _JS_SEND_CALL_RE.finditer(masked):
+        # Every alternative of the send pattern ends at the call's
+        # own '(' — for res.status(500).json(...) that is json's
+        # paren, not status's.
+        open_paren = m.end() - 1
+        statements.append(
+            (m.start(), _js_call_fragment(masked, open_paren,
+                                          len(masked))))
+
+    # Whole-environment one-hop copies, file-wide (the env form is
+    # not tied to a catch block — the os.environ parity).
+    env_vars: set[str] = set()
+    for m in _JS_ASSIGN_RE.finditer(masked):
+        if _js_env_in(m.group(2), set()):
+            env_vars.add(m.group(1))
+    for pos, frag in statements:
+        if _js_env_in(frag, env_vars):
+            fire(pos)
+
+    # Catch regions: (start, end, name). try/catch blocks and
+    # promise .catch handlers (block bodies and expression bodies).
+    regions: list[tuple[int, int, str]] = []
+    for m in _JS_CATCH_RE.finditer(masked):
+        brace = masked.find("{", m.start(), m.end() + 1)
+        if brace == -1:
+            continue
+        start, end = _js_block_span(masked, brace)
+        regions.append((start, end, m.group(1)))
+    for m in _JS_PROMISE_CATCH_RE.finditer(masked):
+        name = m.group(1) or m.group(2)
+        if not name:
+            continue
+        j = m.end()
+        while j < len(masked) and masked[j] in " \t\r\n":
+            j += 1
+        if j < len(masked) and masked[j] == "{":
+            start, end = _js_block_span(masked, j)
+            regions.append((start, end, name))
+        else:
+            # Expression body: the expression IS the handler's
+            # return value.
+            frag = _js_statement(masked, m.end(), len(masked))
+            if _js_leak_in(frag, {name}, set()) or \
+                    _js_env_in(frag, env_vars):
+                fire(m.start())
+    if not regions:
+        return
+    # Outer regions first, so an inner region inherits the names
+    # and one-hop locals in scope around it (the Python walk over
+    # an except handler sees nested handlers' returns too).
+    # Regions are sorted by start (widest first on ties), so the
+    # regions enclosing the current one are exactly the tail of a
+    # stack — scope lookup stays linear in the region count, and
+    # statements are sliced per region by bisection, keeping a
+    # catch-dense file from going quadratic.
+    regions.sort(key=lambda r: (r[0], -r[1]))
+    statements.sort(key=lambda s: s[0])
+    stmt_positions = [pos for pos, _frag in statements]
+    stack: list[tuple[int, int, set, set]] = []
+    for rstart, rend, rname in regions:
+        while stack and not (stack[-1][0] <= rstart
+                             and rend <= stack[-1][1]):
+            stack.pop()
+        if stack:
+            names = stack[-1][2] | {rname}
+            leaks = set(stack[-1][3])
+        else:
+            names = {rname}
+            leaks = set()
+        body = masked[rstart:rend]
+        # One-hop locals, in source order: plain assignments whose
+        # value directly exposes detail, and destructuring of the
+        # detail properties themselves.
+        hops: list[tuple[int, int, object]] = []
+        for m in _JS_ASSIGN_RE.finditer(body):
+            hops.append((m.start(), 0, m))
+        for m in _JS_DESTRUCTURE_RE.finditer(body):
+            hops.append((m.start(), 1, m))
+        for _pos, kind, m in sorted(hops, key=lambda h: h[0]):
+            if kind == 0:
+                if _js_leak_direct(m.group(2), names, leaks):
+                    leaks.add(m.group(1))
+            elif m.group(2) in (names | leaks):
+                for entry in m.group(1).split(","):
+                    entry = entry.strip()
+                    if not entry or entry.startswith("..."):
+                        continue
+                    prop = entry.split(":")[0].split("=")[0].strip()
+                    if prop not in ("stack", "message"):
+                        continue
+                    local = entry.split(":", 1)[1] \
+                        .split("=")[0].strip() if ":" in entry else prop
+                    if re.fullmatch(r"[A-Za-z_$][\w$]*", local):
+                        leaks.add(local)
+        scope_leaks = leaks | env_vars
+        lo = bisect_left(stmt_positions, rstart)
+        hi = bisect_left(stmt_positions, rend)
+        for pos, frag in statements[lo:hi]:
+            if _js_leak_in(frag, names, scope_leaks):
+                fire(pos)
+        stack.append((rstart, rend, names, leaks))
 
 
 # --------------------------------------------------------------------------
@@ -7529,6 +7901,8 @@ def scan_folder(root: Path) -> ScanResult:
                 _download_and_run_findings(
                     rel, "\n".join(_blank_spans(lines, comment_spans)),
                     lines, add)
+                _js_error_leak_findings(rel, lines, add,
+                                        comment_spans, string_spans)
             _hidden_text_findings(rel, text, lines, doc, add)
             _env_injection_findings(rel, text, scan_lines, add)
             _substitution_exec_findings(rel, scan_lines, add, doc,
@@ -7661,6 +8035,26 @@ def scan_folder(root: Path) -> ScanResult:
         if c_line is not None and abs(c_line - b_line) <= 40:
             add("LURE_WITH_BYPASS", rel_f, b_line)
             break
+
+    # Claims check ("says vs does"): the absolute capability claims
+    # in SKILL.md ("makes no network calls", "read-only", "does not
+    # read your credentials") are checked against everything the
+    # scan has found so far. A contradiction is a CAUTION; a
+    # no-network / no-credential claim contradicted by an
+    # exfiltration-class finding is a BLOCK. Skills that make no
+    # absolute claims are untouched by this pass.
+    skill_claims = []
+    for rel_doc, doc_text in prose_docs:
+        if Path(rel_doc).name.lower() == "skill.md":
+            skill_claims += extract_claims(rel_doc, doc_text)
+    if skill_claims:
+        result.claims = check_claims(skill_claims,
+                                     list(result.findings))
+        for chk in result.claims:
+            if chk.status == "contradicted":
+                add("CLAIM_EXFIL_CONTRADICTION" if chk.exfil
+                    else "CLAIM_CONTRADICTED",
+                    chk.claim.file, chk.claim.line, chk.claim.quote)
 
     # Coverage honesty: suspicious skips (or scanning nothing at all) must
     # stop the folder from reading as a clean PASS.

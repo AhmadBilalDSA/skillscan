@@ -213,10 +213,45 @@ output-manipulation family, a current-model judge lifts
 BLOCK+CAUTION from 28.9% to 54.6% with zero false BLOCKs on
 280 benign skills, and weak free-tier judges lift the held-out
 malicious set materially (Gemini Flash-Lite 37.0% → 53.4%;
-the default Qwen 34.1% → 43.2%). The benign set under a weak
-judge is still being measured — that run completes the v0.7
-picture. The deterministic benchmark figures below are
+the default Qwen 34.1% → 43.2%). The benign set has since
+been judged by a weak model: gemini-3.5-flash-lite reviewed
+258 of 259 held-out benign skills with **0 false BLOCKs and
+0 added CAUTIONs** — combined verdicts identical to offline.
+The default Qwen's benign-set run was stopped by its
+free-tier limit after 2 calls, so that preset's benign rate
+at corpus scale remains unmeasured; its malicious-set lift
+above is measured. That completes the v0.7 picture, per
+model. The deterministic benchmark figures below are
 offline-mode numbers and do not change.
+
+**What remains open** (updated on every release; last updated
+for v0.7.1, 2026-11-14):
+
+- **Qwen's benign set is still being priced.** The run is
+  resumable and continues daily across free-tier windows until
+  all 259 held-out benign skills are judged. Until it
+  completes, the default preset's corpus-scale benign rate
+  stays labelled unmeasured above, and the choice of default
+  model stays open. Gemini's picture is complete: measured on
+  both sets, 0 false BLOCKs, 0 added CAUTIONs.
+- **The feature programme is in progress.** Landed in v0.7.1:
+  the claims check (the scanner now checks what a skill's
+  SKILL.md claims about itself against what the scan found).
+  Still to come in the programme: MCP tool-description
+  scanning, a change-watch (pin and re-check) mode, a
+  combination scan across the skills in a folder, and
+  per-project exceptions with reasons. Each item lands only
+  after the full test suites and an adversarial review pass.
+- **The LLM-lane improvement programme is in progress.** Two
+  queued experiments — a purpose-consistency second pass and
+  HTML-comment surfacing — are being signal-tested on
+  development sets. Neither ships without held-out validation
+  and a clean benign gate.
+- **The deterministic coverage programme continues.** v0.7.1
+  extends ERROR_INFO_LEAK to JavaScript/TypeScript; the
+  remaining documented gaps live in
+  [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) and are
+  worked from the daily audit watch.
 
 ## Toolchain integration
 
@@ -233,7 +268,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
 
 ## Rules
 
-59 deterministic rules. Any block-severity hit makes the verdict BLOCK;
+61 deterministic rules. Any block-severity hit makes the verdict BLOCK;
 otherwise any caution hit makes it CAUTION; otherwise PASS. Every rule
 also carries an OWASP mapping (LLM Top 10 / MCP Top 10 category codes),
 surfaced per finding in JSON output and in SARIF rule metadata — it is
@@ -274,7 +309,7 @@ triage metadata only and never affects the verdict.
 | CLOUD_METADATA_EXFIL | block | Touches a cloud metadata endpoint **and** reads credential material or has a network send channel |
 | BROWSER_CREDENTIAL_STORE | caution | Touches browser/wallet credential storage (`Login Data`, `logins.json`, `key4.db`, `Local State`, browser profile dirs, wallet extension storage); counts as credential material for EXFIL_COMBINATION |
 | REVERSE_SHELL | block | A raw socket wired to a shell (`dup2` of the socket fd, `pty.spawn`, `/dev/tcp`, or spawning `/bin/sh` alongside a socket) |
-| ERROR_INFO_LEAK | caution | Returns raw exception text, a stack trace, or an environment dump as a tool result (logging the error and returning a plain message is not flagged) |
+| ERROR_INFO_LEAK | caution | Returns raw exception text, a stack trace, or an environment dump as a tool result, or sends it to a remote endpoint — Python and JavaScript/TypeScript catch-block forms (logging the error and returning a plain message is not flagged) |
 | PACKAGE_INSTALL_SCRIPT | caution | Package runs code at install time: an npm lifecycle script (`preinstall`/`install`/`postinstall`/`prepare`) or a `setup.py` that reaches for subprocess/network/sockets |
 | PACKAGE_INSTALL_SCRIPT_EXEC | block | An install-time script downloads or executes outside code (curl/wget, pipe-to-shell, encoded payload, remote fetch) |
 | DEPENDENCY_SOURCE | caution | A dependency manifest (`package.json` — including `package.template.json` templates — requirements file, `pyproject.toml`, `setup.py`, `Pipfile`) sources a dependency from outside the official registry: a git URL, a direct archive link, a local file path, or a non-official index |
@@ -300,6 +335,8 @@ triage metadata only and never affects the verdict.
 | ENV_INJECTION | caution | Touches `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `PYTHONSTARTUP`, or writes a fixed-name file under `/tmp` and makes it executable or runs it |
 | ENV_INJECTION_INSTALL | block | An install-time or server-start context (npm lifecycle script, `setup.py`, MCP manifest env, a `.pth` startup file) sets `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `PYTHONSTARTUP` / (install contexts) `PYTHONPATH`, or a `.pth` file carries an `import` line |
 | SCAN_INCOMPLETE | caution | Some content could not be scanned, or nothing was scanned — the verdict is partial. Includes compiled code with no inspectable source: a `.pyc` with no matching `.py`, or a native binary in a folder with no source at all |
+| CLAIM_CONTRADICTED | caution | The skill's own SKILL.md claims it does not do something (no network, read-only, no credential access, no command execution, no persistence) that the scan found it doing — see the report's "Says vs does" section. Conditional claims ("can optionally…") are disclosures and never fire |
+| CLAIM_EXFIL_CONTRADICTION | block | A no-network or no-credential claim in SKILL.md contradicted by the exfiltration shape itself (credential material plus a send channel): the description denies the exact behaviour the scan proved |
 
 Every rule ships with a plain-English reason in the report, so a
 non-specialist can understand *why* something was flagged.
@@ -421,7 +458,7 @@ python3 run_v06fix2_tests.py   # v0.6 fix wave 2: demotion hardening (code-only 
 
 [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) maps 25 techniques
 from four published audits of real malicious skills / MCP servers
-against the 59 rules above. Summary (Covered / Partial / Gap per audit):
+against the 61 rules above. Summary (Covered / Partial / Gap per audit):
 
 | Audit | Covered | Partial | Gap |
 |-------|---------|---------|-----|

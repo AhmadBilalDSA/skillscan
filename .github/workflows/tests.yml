@@ -48,3 +48,7 @@ jobs:
         run: python3 run_v06fix2_tests.py
       - name: v0.7 features (optional LLM review mode, stub provider — no live API in CI)
         run: python3 run_v07_tests.py
+      - name: "v0.7.1 JS/TS error-info-leak extension"
+        run: python3 run_v07fix_tests.py
+      - name: "claims check (says vs does)"
+        run: python3 run_feat_claims_tests.py
