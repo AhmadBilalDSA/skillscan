@@ -23,6 +23,7 @@ EXPECTED = {
     "samples/good/notes-summariser": ("PASS", 0),
     "samples/good/expense-summariser": ("PASS", 0),
     "samples/good/unit-converter": ("PASS", 0),
+    "samples/good/reading-list-formatter": ("PASS", 0),
     "samples/good/recipe-scaler": ("PASS", 0),
     # Honest claims: SKILL.md says no network / no changes, and the
     # code does neither — claims check lists them as "matches".
