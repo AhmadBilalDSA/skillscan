@@ -56,3 +56,7 @@ jobs:
         run: python3 run_feat_manifest_tests.py
       - name: "change watch (pin / check-pin)"
         run: python3 run_feat_pinwatch_tests.py
+      - name: "combination scan"
+        run: python3 run_feat_combine_tests.py
+      - name: "exceptions with reasons"
+        run: python3 run_feat_exceptions_tests.py
