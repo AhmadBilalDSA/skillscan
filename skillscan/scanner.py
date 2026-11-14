@@ -26,6 +26,7 @@ import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .claims import check_claims, extract_claims
 from .rules import LINE_RULES, RULES_BY_ID
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
@@ -103,13 +104,18 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     scanned_files: int = 0
     skipped: list[Skipped] = field(default_factory=list)
+    # Claims check ("says vs does"): ClaimCheck objects from
+    # claims.py. Empty when the skill makes no absolute claims —
+    # and then the key is absent from to_dict, so reports for
+    # claim-free skills keep their pre-feature shape exactly.
+    claims: list = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:
         return VERDICT_EXIT_CODES[self.verdict]
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "target": self.target,
             "verdict": self.verdict,
             "exit_code": self.exit_code,
@@ -132,6 +138,9 @@ class ScanResult:
                 for f in self.findings
             ],
         }
+        if self.claims:
+            data["claims_check"] = [c.to_dict() for c in self.claims]
+        return data
 
 
 # --------------------------------------------------------------------------
@@ -7661,6 +7670,26 @@ def scan_folder(root: Path) -> ScanResult:
         if c_line is not None and abs(c_line - b_line) <= 40:
             add("LURE_WITH_BYPASS", rel_f, b_line)
             break
+
+    # Claims check ("says vs does"): the absolute capability claims
+    # in SKILL.md ("makes no network calls", "read-only", "does not
+    # read your credentials") are checked against everything the
+    # scan has found so far. A contradiction is a CAUTION; a
+    # no-network / no-credential claim contradicted by an
+    # exfiltration-class finding is a BLOCK. Skills that make no
+    # absolute claims are untouched by this pass.
+    skill_claims = []
+    for rel_doc, doc_text in prose_docs:
+        if Path(rel_doc).name.lower() == "skill.md":
+            skill_claims += extract_claims(rel_doc, doc_text)
+    if skill_claims:
+        result.claims = check_claims(skill_claims,
+                                     list(result.findings))
+        for chk in result.claims:
+            if chk.status == "contradicted":
+                add("CLAIM_EXFIL_CONTRADICTION" if chk.exfil
+                    else "CLAIM_CONTRADICTED",
+                    chk.claim.file, chk.claim.line, chk.claim.quote)
 
     # Coverage honesty: suspicious skips (or scanning nothing at all) must
     # stop the folder from reading as a clean PASS.

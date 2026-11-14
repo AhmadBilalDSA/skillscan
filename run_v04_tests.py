@@ -78,7 +78,7 @@ def main() -> int:
     check("version-is-0.7.0", skillscan.__version__ == "0.7.0",
           skillscan.__version__)
     from skillscan.rules import RULES
-    check("rule-count-59", len(RULES) == 59, f"{len(RULES)} rules")
+    check("rule-count-61", len(RULES) == 61, f"{len(RULES)} rules")
 
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)

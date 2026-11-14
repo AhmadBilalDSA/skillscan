@@ -24,6 +24,9 @@ EXPECTED = {
     "samples/good/expense-summariser": ("PASS", 0),
     "samples/good/unit-converter": ("PASS", 0),
     "samples/good/recipe-scaler": ("PASS", 0),
+    # Honest claims: SKILL.md says no network / no changes, and the
+    # code does neither — claims check lists them as "matches".
+    "samples/good/honest-local": ("PASS", 0),
     "samples/bad/ssh-stealer": ("BLOCK", 2),
     "samples/bad/obfuscated-dropper": ("BLOCK", 2),
     # Legit-sounding backup skill: runs subprocess + deletes old files.
@@ -32,6 +35,9 @@ EXPECTED = {
     # Legit-sounding batch renamer: runs subprocess + deletes old files.
     # Same shape — CAUTION, not BLOCK.
     "samples/caution/batch-renamer": ("CAUTION", 1),
+    # Claims to be read-only but deletes the files it summarises:
+    # FILE_DELETE plus the claims check's CLAIM_CONTRADICTED.
+    "samples/caution/claims-understated": ("CAUTION", 1),
 }
 
 # Rules that must fire for a sample (checked on top of the verdict).
@@ -40,6 +46,7 @@ MUST_FIRE = {
     "samples/bad/obfuscated-dropper": {"EVAL_EXEC", "DECODE_AND_RUN", "CURL_PIPE_BASH"},
     "samples/caution/shell-automation": {"SHELL_SUBPROCESS", "FILE_DELETE"},
     "samples/caution/batch-renamer": {"SHELL_SUBPROCESS", "FILE_DELETE"},
+    "samples/caution/claims-understated": {"FILE_DELETE", "CLAIM_CONTRADICTED"},
 }
 
 

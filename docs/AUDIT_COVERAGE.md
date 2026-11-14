@@ -1200,11 +1200,42 @@ labelled, additive second opinion, never a replacement judge.
   injection-shaped prose, timeout/HTTP/key-leak paths) remains
   the regression gate for the lane's mechanics.
 
+## Unreleased additions — the claims check ("says vs does")
+
+Not an audit row but a new check on the skill's own honesty, built
+in a feature tree on top of v0.7.0 (not yet released). The audits
+above judge what a skill *does*; nothing in them grades whether the
+skill's description *lies about it*. The claims check extracts the
+absolute capability claims in SKILL.md ("makes no network calls",
+"read-only", "does not read your credentials") and checks each
+against the scan's findings, reporting a "Says vs does" section in
+every format:
+
+- `CLAIM_CONTRADICTED` (**caution**) — a claim contradicted by any
+  observed behaviour of the claimed class (network, credential
+  access, file write/delete, command execution, persistence).
+- `CLAIM_EXFIL_CONTRADICTION` (**block**) — a no-network or
+  no-credential claim contradicted by an exfiltration-class finding
+  (`EXFIL_COMBINATION`, `CLOUD_METADATA_EXFIL`, `TAINTED_SEND`).
+
+Discipline: conditional claims ("can optionally…", "by default")
+are disclosures, not claims; marketing phrasing is not a claim;
+claims that a skill does *more* than it does are never checked;
+quoted text and code fences are not the skill's own claims.
+Evidence: `run_feat_claims_tests.py` (25 cases: 4 must-fire, 8
+must-not-fire, output-surface checks) and samples
+`samples/good/honest-local` (PASS, claims listed as matches) and
+`samples/caution/claims-understated` (CAUTION). Honest limit: the
+check can only contradict behaviour the deterministic rules can
+see — a claim about behaviour no rule covers is listed as
+"matches" on the strength of absence, which is why the section
+says "checked against the scan", not "verified".
+
 ---
 
 *Map compiled from the four audits above and the scanner source
 (`skillscan/rules.py`, `skillscan/scanner.py`, and — for the opt-in
 LLM lane — `skillscan/llm.py`) and test suites as of
-v0.7.0. If a rule or a sample changes, this map must change with it — a
+v0.7.0, plus the unreleased claims-check section above. If a rule or a sample changes, this map must change with it — a
 coverage claim without a suite behind it is exactly the kind of thing
 this document exists to prevent.*

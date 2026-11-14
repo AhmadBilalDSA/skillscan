@@ -4,6 +4,26 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
+## Unreleased
+
+- **Claims check ("says vs does").** The scanner now reads the
+  absolute capability claims a skill makes about itself in SKILL.md
+  ("makes no network calls", "read-only", "does not read your
+  credentials") and checks them against what the scan found. Every
+  report gains a "Says vs does" section (text, markdown and a
+  `claims_check` object in JSON) marking each claim *matches* or
+  *contradicted*, with the contradicting finding named. A
+  contradiction is a CAUTION (new rule `CLAIM_CONTRADICTED`); a
+  no-network / no-credential claim contradicted by an
+  exfiltration-class finding is a BLOCK (`CLAIM_EXFIL_CONTRADICTION`).
+  Conditional claims ("can optionally…", "by default") are treated
+  as disclosures, not claims; claims that a skill does *more* than
+  it does are never checked. Two rules added (59 → 61); skills that
+  make no absolute claims produce byte-identical reports to before.
+  Fixtures: `run_feat_claims_tests.py` (25 cases) plus samples
+  `samples/good/honest-local` and
+  `samples/caution/claims-understated`.
+
 ## Measurement follow-up — 2026-11-14
 
 The Set B benign run promised at v0.7.0 release has reported:

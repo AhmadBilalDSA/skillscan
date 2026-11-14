@@ -122,6 +122,53 @@ def _llm_text_lines(review, combined: str, source: str,
     return lines
 
 
+def _claims_text_lines(result: ScanResult) -> list[str]:
+    """The 'Says vs does' section: the skill's own absolute claims
+    from SKILL.md, each marked against what the scan found."""
+    lines = ["", "Says vs does (claims in SKILL.md, checked against "
+             "the scan):"]
+    for chk in result.claims:
+        c = chk.claim
+        if chk.status == "contradicted":
+            by = ", ".join(
+                f"{h['rule']} ({_clean(h['file'])}:{h['line']})"
+                for h in chk.contradicted_by)
+            lines.append(
+                f"  CONTRADICTED — says: {_clean(c.says)} "
+                f"({_clean(c.file)}:{c.line})")
+            lines.append(f"      \"{_clean(c.quote)}\"")
+            lines.append(f"      but the scan found: {by}")
+        else:
+            lines.append(
+                f"  matches — says: {_clean(c.says)} "
+                f"({_clean(c.file)}:{c.line})")
+            lines.append(f"      \"{_clean(c.quote)}\"")
+    return lines
+
+
+def _claims_md_lines(result: ScanResult) -> list[str]:
+    lines = ["", "## Says vs does", "",
+             "Claims the skill makes about itself in SKILL.md, "
+             "checked against the scan:", ""]
+    for chk in result.claims:
+        c = chk.claim
+        if chk.status == "contradicted":
+            by = ", ".join(
+                f"`{h['rule']}` (`{_clean(h['file'])}:{h['line']}`)"
+                for h in chk.contradicted_by)
+            lines.append(
+                f"- **CONTRADICTED** — says: {c.says} "
+                f"(`{_clean(c.file)}:{c.line}`): "
+                f"\"{_clean(c.quote)}\" — but the scan found: {by}")
+        else:
+            lines.append(
+                f"- matches — says: {c.says} "
+                f"(`{_clean(c.file)}:{c.line}`): "
+                f"\"{_clean(c.quote)}\"")
+    lines.append("")
+    return lines
+
+
 def render_text(result: ScanResult, review=None, combined: str | None = None,
                 source: str = "offline") -> str:
     lines = [f"SkillScan report for: {_clean(result.target)}", ""]
@@ -139,6 +186,8 @@ def render_text(result: ScanResult, review=None, combined: str | None = None,
             lines.append(f"      {f.reason}")
             if f.evidence:
                 lines.append(f"      > {_clean(f.evidence)}")
+    if result.claims:
+        lines += _claims_text_lines(result)
     lines.append("")
     if review is None:
         lines.append(f"VERDICT: {result.verdict}")
@@ -174,6 +223,8 @@ def render_md(result: ScanResult, review=None, combined: str | None = None,
             )
     else:
         lines.append("No known-bad patterns found.")
+    if result.claims:
+        lines += _claims_md_lines(result)
     lines.append("")
     if review is not None:
         lines += [

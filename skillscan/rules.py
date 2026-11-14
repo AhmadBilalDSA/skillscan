@@ -90,6 +90,8 @@ _OWASP_MAP: dict[str, str] = {
     "SUBSTITUTION_EXEC": "LLM03, MCP05",
     "ENV_INJECTION": "LLM06, MCP05",
     "ENV_INJECTION_INSTALL": "LLM03, MCP04, MCP05",
+    "CLAIM_CONTRADICTED": "LLM01",
+    "CLAIM_EXFIL_CONTRADICTION": "LLM01, LLM02",
 }
 
 
@@ -656,6 +658,24 @@ RULES: list[Rule] = [
         "A verdict based on partial coverage must not be read as clean.",
         r"(?!)never-matches-line-level",  # scanner bookkeeping, scanner.py
     ),
+    _rule(
+        "CLAIM_CONTRADICTED", "caution",
+        "The skill's own description claims it does not do something "
+        "the scan found it doing (its SKILL.md says one thing, its "
+        "behaviour says another). If the claim was scoped or "
+        "qualified in a way this checker could not see, the "
+        "behaviour is still real — read the code before installing.",
+        r"(?!)never-matches-line-level",  # claims check, claims.py
+    ),
+    _rule(
+        "CLAIM_EXFIL_CONTRADICTION", "block",
+        "The skill's own description claims it makes no network use "
+        "or never touches credentials, while the scan found the "
+        "exfiltration shape: credential material plus a way to send "
+        "data out. The description denies the exact behaviour the "
+        "scan proved.",
+        r"(?!)never-matches-line-level",  # claims check, claims.py
+    ),
 ]
 
 RULES_BY_ID = {rule.id: rule for rule in RULES}
@@ -676,5 +696,6 @@ FILE_LEVEL_RULE_IDS = {
     "PROSE_PIPE_INSTRUCTION", "PROSE_READ_SEND", "PROSE_SAFETY_BYPASS",
     "LURE_WITH_BYPASS", "TAINTED_SEND", "SECRET_FLOW", "TYPOSQUAT_SUSPECT",
     "AGENT_CONFIG_WRITE", "AGENT_CREDENTIAL_READ",
+    "CLAIM_CONTRADICTED", "CLAIM_EXFIL_CONTRADICTION",
 }
 LINE_RULES = [r for r in RULES if r.id not in FILE_LEVEL_RULE_IDS]
