@@ -234,6 +234,14 @@ for v0.7.1, 2026-11-14):
   stays labelled unmeasured above, and the choice of default
   model stays open. Gemini's picture is complete: measured on
   both sets, 0 false BLOCKs, 0 added CAUTIONs.
+- **The feature programme is in progress.** Landed in v0.7.1:
+  the claims check (the scanner now checks what a skill's
+  SKILL.md claims about itself against what the scan found).
+  Still to come in the programme: MCP tool-description
+  scanning, a change-watch (pin and re-check) mode, a
+  combination scan across the skills in a folder, and
+  per-project exceptions with reasons. Each item lands only
+  after the full test suites and an adversarial review pass.
 - **The LLM-lane improvement programme is in progress.** Two
   queued experiments — a purpose-consistency second pass and
   HTML-comment surfacing — are being signal-tested on
@@ -260,7 +268,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
 
 ## Rules
 
-59 deterministic rules. Any block-severity hit makes the verdict BLOCK;
+61 deterministic rules. Any block-severity hit makes the verdict BLOCK;
 otherwise any caution hit makes it CAUTION; otherwise PASS. Every rule
 also carries an OWASP mapping (LLM Top 10 / MCP Top 10 category codes),
 surfaced per finding in JSON output and in SARIF rule metadata — it is
@@ -327,6 +335,8 @@ triage metadata only and never affects the verdict.
 | ENV_INJECTION | caution | Touches `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `PYTHONSTARTUP`, or writes a fixed-name file under `/tmp` and makes it executable or runs it |
 | ENV_INJECTION_INSTALL | block | An install-time or server-start context (npm lifecycle script, `setup.py`, MCP manifest env, a `.pth` startup file) sets `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `PYTHONSTARTUP` / (install contexts) `PYTHONPATH`, or a `.pth` file carries an `import` line |
 | SCAN_INCOMPLETE | caution | Some content could not be scanned, or nothing was scanned — the verdict is partial. Includes compiled code with no inspectable source: a `.pyc` with no matching `.py`, or a native binary in a folder with no source at all |
+| CLAIM_CONTRADICTED | caution | The skill's own SKILL.md claims it does not do something (no network, read-only, no credential access, no command execution, no persistence) that the scan found it doing — see the report's "Says vs does" section. Conditional claims ("can optionally…") are disclosures and never fire |
+| CLAIM_EXFIL_CONTRADICTION | block | A no-network or no-credential claim in SKILL.md contradicted by the exfiltration shape itself (credential material plus a send channel): the description denies the exact behaviour the scan proved |
 
 Every rule ships with a plain-English reason in the report, so a
 non-specialist can understand *why* something was flagged.
@@ -448,7 +458,7 @@ python3 run_v06fix2_tests.py   # v0.6 fix wave 2: demotion hardening (code-only 
 
 [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) maps 25 techniques
 from four published audits of real malicious skills / MCP servers
-against the 59 rules above. Summary (Covered / Partial / Gap per audit):
+against the 61 rules above. Summary (Covered / Partial / Gap per audit):
 
 | Audit | Covered | Partial | Gap |
 |-------|---------|---------|-----|
