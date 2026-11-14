@@ -4,6 +4,23 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
+## Measurement follow-up — 2026-11-14
+
+v0.8.0 was re-measured on the pinned MaliciousSkillBench corpus
+on release day, with the same harness and counting as the
+published v0.6 run. The verdicts are unchanged from v0.6 on
+every one of the 9,656 skills: malicious BLOCK 45.8% (3,399),
+BLOCK+CAUTION 82.4% (6,117); benign false BLOCKs 0, CAUTION 557
+(24.9%). The release's new machinery corroborated rather than
+moved verdicts on this corpus — the claims check reported
+contradictions on 129 malicious and 16 benign folders, and the
+JavaScript/TypeScript ERROR_INFO_LEAK extension fired on 38
+more malicious folders, every fire on a folder already at that
+verdict or higher — and the new MCP tool-description rules
+fired 0 times: only 12 of 7,421 malicious folders carry a
+`"tools"` manifest at all. The zero-false-BLOCK record holds
+at 63 rules. Full account: docs/BENCHMARKS.md.
+
 ## v0.8.0 — 2026-11-14
 
 The feature-programme release. Five differentiators, each

@@ -591,7 +591,9 @@ codes, and exits non-zero on any failure.
 
 SkillScan's own measured rates on a public labelled corpus —
 **MaliciousSkillBench** (9,740 labelled skills, pinned at commit
-`893afd6`), run 2026-11-11 with SkillScan **v0.6.0**. Malicious skills
+`893afd6`), first run 2026-11-11 with SkillScan v0.6.0 and re-run
+2026-11-14 with SkillScan **v0.8.0** — the figures below are the
+v0.8.0 run. Malicious skills
 were scanned as complete extracted folders; benign skills are shipped
 by the benchmark as frozen text, so each was scanned as a single
 `SKILL.md` folder. Nothing was executed — folders were read as text
@@ -640,6 +642,16 @@ Honest limits, stated plainly:
   benign set; the benign flagged-at-any-severity rate rose from
   22.3% to 24.8% because the new rules also add CAUTIONs on benign
   prose.
+- **v0.8.0's re-run moved no verdict on this corpus.** Every one
+  of the 9,656 skills got the same verdict as in the v0.6 run.
+  The release's new machinery aims at shapes this corpus barely
+  contains: MCP tool manifests appear in only 12 of 7,421
+  malicious folders, so the new MCP tool-description rules fired
+  0 times here; and the claims check (129 malicious and 16 benign
+  folders) and the JavaScript/TypeScript ERROR_INFO_LEAK
+  extension (38 more malicious folders) fired only on skills
+  already at the same or a higher verdict — corroboration, not
+  new detections. The zero-false-BLOCK record holds at 63 rules.
 
 ## Licence
 

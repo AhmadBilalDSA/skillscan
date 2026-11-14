@@ -3,7 +3,10 @@
 SkillScan's measured detection and false-positive rates on a public
 labelled corpus. These are SkillScan's own numbers, published as
 measured — including the families where the rates are poor. Last run:
-**2026-11-11**, scanner **SkillScan v0.6.0** (59 deterministic rules).
+**2026-11-14**, scanner **SkillScan v0.8.0** (63 deterministic
+rules). First run 2026-11-11 on v0.6.0; the v0.8.0 re-run gave every
+skill the same verdict as the v0.6 run (see "What changed from
+v0.6" below).
 
 ## Corpus
 
@@ -39,8 +42,10 @@ subset of the malicious side.
 - SkillScan interacted with every sample by reading it as text only.
   Nothing was executed, installed, imported, or uploaded. The scanner
   produced zero errors across all 9,656 scans.
-- Median scan time was ~82 ms per malicious skill and ~34 ms per
-  benign skill.
+- Median scan time in the v0.8.0 run was ~110 ms per malicious
+  skill and ~43 ms per benign skill (the same harness measured
+  ~102 ms / ~55 ms for v0.6.0 on the same machine — timings are
+  machine-dependent; the verdicts are the result).
 
 ## Counting rules
 
@@ -64,26 +69,42 @@ subset of the malicious side.
 | Malicious | 7,421 | 3,399 | 2,718 | 1,304 | **45.8%** | **82.4%** |
 | Benign | 2,235 | 0 | 557 | 1,678 | false BLOCK **0%** | flagged 24.9% |
 
-What changed from v0.5, stated exactly: four previously-CAUTION
-malicious skills moved to BLOCK — all caught by the new
-AGENT_CONFIG_WRITE rule in code (a write of a config file inside
-`~/.claude/`, a write under `~/.claude/MEMORY/` assembled
-through variables, a third surfaced by the v0.6 fix wave's
-widened path resolution, and a fourth — a Ruby `File.write` to
-a `File.join(Dir.home, '.claude', …)` token path — surfaced by
-fix wave 2) — and no skill's verdict got weaker
-anywhere, in the build, the fix wave, or fix wave 2. The v0.6 rules target
-a 2026 attack class (agent-config poisoning) that this corpus
-largely predates: AGENT_CONFIG_WRITE fires on 38 malicious
-folders (9 at BLOCK severity, 29 at CAUTION) and
-AGENT_CREDENTIAL_READ on none, because the corpus's credential
-theft aims at SSH/cloud/browser stores, not agent credential
-stores. On the benign side the new rules fire
-on 5 folders (0.22%), all AGENT_CONFIG_WRITE at CAUTION in prose
-— four are genuine user-mediated global-config instructions (the
-shape the CAUTION tier exists for) and one is an accepted
-borderline advisory sentence; 2 benign folders change verdict
-(both PASS → CAUTION).
+What changed from v0.6, stated exactly: **nothing — at the
+verdict level.** All 9,656 skills received the identical verdict
+in the v0.8.0 run (malicious BLOCK 3,399, CAUTION 2,718, PASS
+1,304; benign BLOCK 0, CAUTION 557, PASS 1,678), and the family
+table below is likewise unchanged. v0.7 added no deterministic
+rules (the count stayed 59). The post-v0.6 deterministic changes
+did fire — on 163 malicious and 16 benign folders the rule sets
+differ — but every new fire landed on a folder already at that
+verdict or higher:
+
+- `ERROR_INFO_LEAK`'s JavaScript/TypeScript form (v0.7.1) fired
+  on 38 more malicious folders (473 → 511 fires, all at CAUTION
+  severity): 30 were already BLOCK and 8 already CAUTION.
+- The claims check (v0.7.1) reported contradictions on 129
+  malicious folders — 126 at CAUTION tier, 3 at its BLOCK tier
+  for exfiltration contradictions — and on 16 benign folders.
+  Every one was already at the same or a higher verdict; no
+  benign verdict changed. On this corpus the check corroborates
+  verdicts the behaviour rules had already reached, which is
+  what it is for: it reports where a skill's own claims disagree
+  with the scan.
+- The two MCP tool-description rules (v0.8.0) fired 0 times:
+  only 12 of 7,421 malicious folders carry a `"tools"` manifest
+  at all (see Limitations). The corpus predates that attack
+  shape; the rules are covered by their fixture suites instead.
+- `--combine`, `--pin` / `--check-pin` and `--exceptions` are
+  separate modes a plain folder scan never exercises, so this
+  run says nothing about them either way.
+
+(For the record, v0.6's own change from v0.5 was four
+previously-CAUTION malicious skills moving to BLOCK, all caught
+by the then-new AGENT_CONFIG_WRITE rule in code; that rule still
+fires on 38 malicious folders, 9 at BLOCK severity, and
+AGENT_CREDENTIAL_READ still on none, because the corpus's
+credential theft aims at SSH/cloud/browser stores, not agent
+credential stores.)
 
 ### Detection by attack family (membership basis)
 
@@ -120,12 +141,15 @@ Two membership figures need their honest footnotes:
   string literals, documentation examples) below block severity,
   the regression was fully reversed on the same benign set, and
   v0.5 holds at zero.
-- CAUTIONs: 557 (24.9%), up from 555 (24.8%) in v0.5. The v0.6
-  addition is `AGENT_CONFIG_WRITE` on 5 skills (0.22%), all in
-  prose at caution severity (see the headline note). The top
-  driver overall remains `PROSE_DOWNLOAD_RUN` (290 skills, 13.0%
-  of all benign): prose that joins an external download with a
-  run step.
+- CAUTIONs: 557 (24.9%), unchanged from v0.6 (and up only 2 from
+  555, 24.8%, in v0.5 — the v0.6 addition was
+  `AGENT_CONFIG_WRITE` on 5 skills, 0.22%, all in prose at
+  caution severity). The only post-v0.6 rule to fire on the
+  benign side is the claims check: `CLAIM_CONTRADICTED` on 16
+  skills, every one already at CAUTION — no benign verdict
+  changed in the v0.8.0 run. The top driver overall remains
+  `PROSE_DOWNLOAD_RUN` (290 skills, 13.0% of all benign): prose
+  that joins an external download with a run step.
 
 ## Limitations
 
@@ -148,13 +172,16 @@ Two membership figures need their honest footnotes:
   That mirrors how SkillScan is used (scan the folder you were
   given), but it means the benign false-positive figure measures
   prose-triggered false BLOCKs, not code-triggered ones.
-- **Manifest shapes are rare in this corpus.** Only ~5.7% of the
-  malicious folders carry any manifest-style file at all, and no
-  URL/VCS dependency specs appear in it — so the
-  dependency/supply-chain family's low BLOCK rate is mostly a
-  severity-policy question about install instructions, and these
-  results say little about manifest-heavy real-world folders either
-  way.
+- **Manifest shapes are rare in this corpus.** Only 693 of the
+  7,421 malicious folders carry any `.json` file at all, only 12
+  carry a `"tools"` key — the MCP tool-manifest shape — and no
+  URL/VCS dependency specs appear in it. So the v0.8.0 MCP
+  tool-description rules fired 0 times here and these results say
+  nothing about them either way (their evidence is their fixture
+  suites), and the dependency/supply-chain family's low BLOCK
+  rate is mostly a severity-policy question about install
+  instructions; these results say little about manifest-heavy
+  real-world folders.
 - **Corpus dependence.** These rates are properties of this corpus
   at this pinned revision and this scanner version. A different
   corpus will give different numbers; the pinned commits above are

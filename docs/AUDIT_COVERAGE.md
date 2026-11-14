@@ -1487,6 +1487,20 @@ expires — the expiry and the visible record are the
 controls; and an exception can set aside any finding,
 including SCAN_INCOMPLETE, which is precisely why the
 excepted section is always printed.
+- **Full-corpus re-scan (MaliciousSkillBench, same counting as
+  the v0.6 report).** v0.8.0's verdicts are identical to v0.6's
+  on all 9,656 skills: malicious BLOCK 45.8% (3,399),
+  BLOCK+CAUTION 82.4% (6,117); benign false BLOCKs **0**,
+  CAUTION 557 (24.9%). The post-v0.6 deterministic additions
+  fired but moved nothing: ERROR_INFO_LEAK's JS/TS form on 38
+  more malicious folders (all already CAUTION or BLOCK), the
+  claims check on 129 malicious and 16 benign folders (all
+  already at the same or a higher verdict; no benign verdict
+  changed), and the two MCP description rules 0 times — only
+  12 of 7,421 malicious folders carry a `"tools"` manifest at
+  all, so this corpus cannot exercise them. Median 110 ms
+  malicious / 43 ms benign. Full account in
+  docs/BENCHMARKS.md.
 
 ---
 
