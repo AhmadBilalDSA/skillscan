@@ -1452,13 +1452,49 @@ flows into it, producing `TAINTED_SEND`, which does count
 here); widening it would change solo behaviour, so it
 stays a base-scanner decision.
 
+## Unreleased additions — exceptions with reasons (--exceptions)
+
+A project can accept a finding on the record with an
+exceptions file (`skillscan/exceptions.py`): each entry
+names a rule, a path glob (fnmatch, matched against the
+finding's file inside the skill), a human reason, and an
+expiry date. Excepted findings are removed from the
+verdict computation — the verdict is recomputed from the
+findings that remain — but never from the report: they
+appear in an "Excepted findings" section (text/markdown),
+as a flagged `excepted_findings` array in JSON, and in
+SARIF as results with an external suppression whose
+justification is the reason. Expired exceptions stop
+applying and are reported (including how many findings
+they would have covered); exceptions matching nothing are
+reported as possibly stale. The file is validated like a
+record: all four fields required and non-empty, rule ids
+checked against the rule set (a typo fails the run rather
+than silently never matching), duplicate (rule, path)
+entries and unknown keys rejected, malformed JSON a plain
+exit-3 error. Exceptions apply to the deterministic
+result before the optional `--llm` review, and cannot be
+combined with `--pin` / `--check-pin` (a pin fingerprints
+the raw scan) or `--combine` (members are reported raw).
+Without `--exceptions`, reports are byte-identical to
+before: the `excepted` / `exception_notes` result fields
+stay empty and no new keys or sections appear. Evidence:
+`run_feat_exceptions_tests.py` (42 cases). Honest limits:
+matching is by rule + file path only (not line or
+evidence), so an exception covers every finding of that
+rule in the matched files, present and future, until it
+expires — the expiry and the visible record are the
+controls; and an exception can set aside any finding,
+including SCAN_INCOMPLETE, which is precisely why the
+excepted section is always printed.
+
 ---
 
 *Map compiled from the four audits above and the scanner source
 (`skillscan/rules.py`, `skillscan/scanner.py`, and — for the opt-in
 LLM lane — `skillscan/llm.py`) and test suites as of
 v0.7.1, with the v0.7.1 additions, the claims-check section
-and the unreleased manifest-pass, change-watch and
-combination-scan sections above. If a rule or a sample changes, this map must change
+and the unreleased manifest-pass, change-watch,
+combination-scan and exceptions sections above. If a rule or a sample changes, this map must change
 with it — a coverage claim without a suite behind it is exactly
 the kind of thing this document exists to prevent.*

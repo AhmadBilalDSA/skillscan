@@ -69,6 +69,22 @@ suites and an adversarial review before it was pushed.
   untainted `smtplib` send stays a documented non-channel,
   matching the solo scanner. No rules added. Fixtures:
   `run_feat_combine_tests.py` (50 cases).
+- **Exceptions with reasons (`--exceptions`).** A JSON file
+  (`skillscan-exceptions/1`) naming findings a project
+  accepts — rule, path glob, a human reason, and an expiry
+  date. Excepted findings leave the verdict (recomputed
+  from what remains) but stay fully visible: an "Excepted
+  findings" section in text/markdown, a flagged
+  `excepted_findings` array in JSON, and SARIF results
+  carrying an external suppression whose justification is
+  the reason. Expired exceptions stop applying and are
+  reported, as are exceptions that match nothing. Every
+  entry needs all four fields; rule ids are validated
+  against the scanner's rules; duplicates, unknown keys,
+  and malformed files fail the run visibly (exit 3).
+  Cannot be combined with `--pin` / `--check-pin` /
+  `--combine`. No rules added. Fixtures:
+  `run_feat_exceptions_tests.py` (42 cases).
 
 ## v0.7.1 — 2026-11-14
 

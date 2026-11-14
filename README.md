@@ -69,6 +69,7 @@ python3 -m skillscan <path-to-skill-folder> --llm         # + optional LLM revie
 python3 -m skillscan <path-to-skill-folder> --pin pin.json      # fingerprint it (see Change watch)
 python3 -m skillscan <path-to-skill-folder> --check-pin pin.json # later: what changed?
 python3 -m skillscan <path-to-skills-folder> --combine          # judge a folder of skills as a set
+python3 -m skillscan <path-to-skill-folder> --exceptions exceptions.json  # accept findings, on the record
 ```
 
 Repo URLs: only `https://github.com/<owner>/<repo>` is accepted.
@@ -181,6 +182,41 @@ variant — stored-credential readers pair with any network
 capability at all, while a bare fetch next to a weaker
 credential read does not fire), and file-delete ×
 persistence.
+
+### Exceptions with reasons (--exceptions)
+
+Sometimes a finding is real but accepted: a dev helper that
+reads the project's own example `.env`, a fixture that has
+to contain a fake credential path. `--exceptions FILE`
+takes a JSON file that names those findings — rule, path
+glob, a human reason, and an expiry date:
+
+```json
+{"format": "skillscan-exceptions/1",
+ "exceptions": [
+   {"rule": "ENV_FILE_READ", "path": "tools/dev_*.py",
+    "reason": "Dev-only helper; reads the project's own example .env.",
+    "expires": "2027-03-01"}]}
+```
+
+Nothing is silently dropped. An excepted finding leaves
+the verdict (which is recomputed from what remains) but
+stays fully visible in an **Excepted findings** section —
+in JSON it keeps its full shape, flagged, with the reason
+and expiry attached; in SARIF it is a result carrying a
+suppression whose justification is the reason. An
+**expired** exception stops applying — the finding counts
+again — and is itself reported; an exception that matches
+nothing is reported as possibly stale. Every entry needs
+all four fields (a reason-less exception is exactly what
+this exists to prevent), rule ids are checked against the
+scanner's own rules, and a malformed file fails the run
+with a plain error (exit 3) rather than being quietly
+ignored. Exceptions apply to the deterministic scan,
+before the optional `--llm` review; they cannot be
+combined with `--pin` / `--check-pin` or `--combine`.
+Keep the file outside the scanned folder — inside, it
+would be scanned as an ordinary file.
 
 ## Modes: offline (default) and LLM review (opt-in)
 
@@ -297,7 +333,7 @@ for v0.7.1, 2026-11-14):
   stays labelled unmeasured above, and the choice of default
   model stays open. Gemini's picture is complete: measured on
   both sets, 0 false BLOCKs, 0 added CAUTIONs.
-- **The feature programme is in progress.** Landed in v0.7.1:
+- **The feature programme is complete.** Landed in v0.7.1:
   the claims check (the scanner now checks what a skill's
   SKILL.md claims about itself against what the scan found).
   Landed since, not yet in a release: MCP tool-description
@@ -305,11 +341,13 @@ for v0.7.1, 2026-11-14):
   and steering, and join the `--llm` lane as a labelled
   surface), the change watch (`--pin` / `--check-pin`:
   fingerprint a folder, later diff it — the rug-pull guard),
-  and the combination scan (`--combine`: a folder of skills
+  the combination scan (`--combine`: a folder of skills
   judged as a set, with cross-skill capability pairs
-  reported). Still to come in the programme: per-project
-  exceptions with reasons. Each item lands only after the
-  full test suites and an adversarial review pass.
+  reported), and exceptions with reasons (`--exceptions`:
+  findings a project accepts stay visible but leave the
+  verdict, each with a reason and an expiry). Each item
+  landed only after the full test suites and an adversarial
+  review pass.
 - **The LLM-lane improvement programme is in progress.** Two
   queued experiments — a purpose-consistency second pass and
   HTML-comment surfacing — are being signal-tested on
@@ -633,10 +671,10 @@ and reports where the scan disagrees.
 
 On `main`, not yet in a release: MCP tool-description
 scanning (63 deterministic rules), the change watch
-(`--pin` / `--check-pin`), and the combination scan
-(`--combine`), with the rest of the feature
-programme — exceptions with reasons —
-tracked in the "What remains open" block above. Expect false positives and false negatives; the
+(`--pin` / `--check-pin`), the combination scan
+(`--combine`), and exceptions with reasons
+(`--exceptions`) — the feature programme is complete,
+with its state tracked in the "What remains open" block above. Expect false positives and false negatives; the
 rule set and corpus are a starting point, not a finished
 product. Issues and new evasion samples are welcome — a
 mutation that evades SkillScan is a valuable contribution.

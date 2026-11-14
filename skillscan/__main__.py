@@ -132,6 +132,7 @@ def _claims_text_lines(result: ScanResult) -> list[str]:
         if chk.status == "contradicted":
             by = ", ".join(
                 f"{h['rule']} ({_clean(h['file'])}:{h['line']})"
+                + (" (excepted)" if h.get("excepted") else "")
                 for h in chk.contradicted_by)
             lines.append(
                 f"  CONTRADICTED — says: {_clean(c.says)} "
@@ -155,6 +156,7 @@ def _claims_md_lines(result: ScanResult) -> list[str]:
         if chk.status == "contradicted":
             by = ", ".join(
                 f"`{h['rule']}` (`{_clean(h['file'])}:{h['line']}`)"
+                + (" (excepted)" if h.get("excepted") else "")
                 for h in chk.contradicted_by)
             lines.append(
                 f"- **CONTRADICTED** — says: {c.says} "
@@ -169,13 +171,46 @@ def _claims_md_lines(result: ScanResult) -> list[str]:
     return lines
 
 
+def _excepted_lines(result: ScanResult) -> list[str]:
+    """The visible record of an exceptions file's effect:
+    what was set aside (and why), and the notes about the
+    file itself (expired / unmatched entries). Empty when no
+    exceptions were applied."""
+    lines: list[str] = []
+    if result.excepted:
+        lines.append("")
+        lines.append(
+            f"Excepted findings ({len(result.excepted)}) — set "
+            "aside by the exceptions file; not counted in "
+            "the verdict:")
+        for e in result.excepted:
+            f = e.finding
+            count = f" (x{f.count})" if f.count > 1 else ""
+            lines.append(
+                f"  [{f.severity.upper()}] {f.rule} — "
+                f"{_clean(f.file)}:{f.line}{count}")
+            lines.append(f"      {f.reason}")
+            if f.evidence:
+                lines.append(f"      > {_clean(f.evidence)}")
+            lines.append(
+                f"      excepted because: {_clean(e.reason)} "
+                f"(expires {e.expires})")
+    if result.exception_notes:
+        lines.append("")
+        lines.append("Exception notes:")
+        for note in result.exception_notes:
+            lines.append(f"  - {_clean(note)}")
+    return lines
+
+
 def render_text(result: ScanResult, review=None, combined: str | None = None,
                 source: str = "offline") -> str:
     lines = [f"SkillScan report for: {_clean(result.target)}", ""]
     lines += _coverage_lines(result)
     lines.append("")
     if not result.findings:
-        lines.append("No known-bad patterns found.")
+        if not result.excepted:
+            lines.append("No known-bad patterns found.")
     else:
         lines.append(f"Findings ({len(result.findings)}):")
         for f in result.findings:
@@ -188,6 +223,7 @@ def render_text(result: ScanResult, review=None, combined: str | None = None,
                 lines.append(f"      > {_clean(f.evidence)}")
     if result.claims:
         lines += _claims_text_lines(result)
+    lines += _excepted_lines(result)
     lines.append("")
     if review is None:
         lines.append(f"VERDICT: {result.verdict}")
@@ -222,9 +258,33 @@ def render_md(result: ScanResult, review=None, combined: str | None = None,
                 f"{f.count} | {reason} | `{evidence}` |"
             )
     else:
-        lines.append("No known-bad patterns found.")
+        if not result.excepted:
+            lines.append("No known-bad patterns found.")
     if result.claims:
         lines += _claims_md_lines(result)
+    if result.excepted:
+        lines += ["", f"## Excepted findings ({len(result.excepted)})",
+                  "",
+                  "Set aside by the exceptions file; not counted "
+                  "in the verdict.", ""]
+        for e in result.excepted:
+            f = e.finding
+            reason = _clean(e.reason).replace("|", "\\|")
+            freason = f.reason.replace("|", "\\|")
+            fevidence = _clean(f.evidence).replace("|", "\\|") \
+                .replace("`", "'")
+            item = (
+                f"- **{f.severity.upper()}** {f.rule} — "
+                f"`{_clean(f.file)}:{f.line}` (x{f.count}) — "
+                f"{freason} — excepted because: {reason} "
+                f"(expires {e.expires})")
+            if f.evidence:
+                item += f" — evidence: `{fevidence}`"
+            lines.append(item)
+    if result.exception_notes:
+        lines += ["", "## Exception notes", ""]
+        for note in result.exception_notes:
+            lines.append(f"- {_clean(note)}")
     lines.append("")
     if review is not None:
         lines += [
@@ -321,11 +381,42 @@ def render_sarif(result: ScanResult, review=None,
         if f.evidence:
             entry["message"]["text"] = f"{f.reason} Evidence: {_clean(f.evidence)}"
         results.append(entry)
+    for e in result.excepted:
+        # Excepted findings stay in the SARIF report as results
+        # carrying the standard suppression object — the
+        # justification is the exception's reason.
+        f = e.finding
+        entry = {
+            "ruleId": f.rule,
+            "level": _SARIF_LEVELS.get(f.severity, "warning"),
+            "message": {"text": f.reason},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": _clean(f.file)},
+                    "region": {"startLine": max(f.line, 1)},
+                },
+            }],
+            "partialFingerprints": {
+                "skillscan/v1": f"{f.rule}:{_clean(f.file)}:{f.line}:{f.count}",
+            },
+            "suppressions": [{
+                "kind": "external",
+                "justification": _clean(e.reason),
+                "properties": {"expires": e.expires},
+            }],
+        }
+        if f.evidence:
+            entry["message"]["text"] = f"{f.reason} Evidence: {_clean(f.evidence)}"
+        results.append(entry)
     properties = {
         "verdict": result.verdict,
         "scannedFiles": result.scanned_files,
         "skippedFiles": len(result.skipped),
     }
+    if result.excepted:
+        properties["exceptedFindings"] = len(result.excepted)
+    if result.exception_notes:
+        properties["exceptionNotes"] = list(result.exception_notes)
     if review is not None:
         # The LLM lane is demarcated in SARIF too: its findings carry
         # their own rule id (declared here, only in --llm runs), and
@@ -571,6 +662,16 @@ def main(argv: list[str] | None = None) -> int:
              "unchanged. Exit code: the worst member's code, "
              "3 = the folder is not a set of skills.",
     )
+    parser.add_argument(
+        "--exceptions", metavar="FILE", default=None,
+        help="Exceptions with reasons: a JSON file naming "
+             "findings this project accepts (rule + path glob "
+             "+ reason + expiry date). Excepted findings stay "
+             "visible in the report but leave the verdict; "
+             "expired or unmatched exceptions are reported. "
+             "A malformed file fails the run (exit 3). Cannot "
+             "be combined with --pin / --check-pin / --combine.",
+    )
     args = parser.parse_args(argv)
 
     if args.pin and args.check_pin:
@@ -604,6 +705,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.combine and args.format not in ("text", "json"):
         print("error: --combine supports --format text or json "
               "only", file=sys.stderr)
+        return 3
+    if args.exceptions and (args.pin or args.check_pin):
+        print("error: --exceptions cannot be used with --pin / "
+              "--check-pin (a pin fingerprints the raw scan)",
+              file=sys.stderr)
+        return 3
+    if args.exceptions and args.combine:
+        print("error: --exceptions cannot be used with "
+              "--combine (set members are reported raw)",
+              file=sys.stderr)
         return 3
 
     clone_root: Path | None = None
@@ -646,6 +757,30 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # never answer a folder with a traceback
             print(f"error: scan failed: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 3
+        if args.exceptions:
+            # Exceptions with reasons: applied to the raw
+            # deterministic result, before every mode below
+            # (the pin modes and --combine rejected the flag
+            # above; the --llm review, when requested, sees
+            # the findings that remain). A malformed file
+            # fails the run visibly — never a silent ignore.
+            from datetime import date as _date
+
+            from . import exceptions as _ex
+
+            try:
+                _entries = _ex.load_exceptions(
+                    Path(args.exceptions))
+                _ex.apply_exceptions(result, _entries,
+                                     _date.today())
+            except _ex.ExceptionsError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 3
+            except Exception as exc:  # never a traceback
+                print(f"error: exceptions failed: "
+                      f"{type(exc).__name__}: {exc}",
+                      file=sys.stderr)
+                return 3
         if args.pin or args.check_pin:
             # Change watch: a fingerprint mode wrapped around the
             # ordinary offline scan above — the scan itself is

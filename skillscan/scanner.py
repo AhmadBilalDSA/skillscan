@@ -146,6 +146,15 @@ class ScanResult:
     # cannot mask a credential hit later in the same file.
     # Deliberately NOT rendered and NOT in to_dict.
     gate_signals: dict = field(default_factory=dict)
+    # Exceptions with reasons (exceptions.py): findings set
+    # aside by the user's exceptions file (ExceptedFinding
+    # objects), and notes about that file (expired or
+    # unmatched entries). Both stay empty unless --exceptions
+    # was given and something was excepted or noted — and
+    # only then do the keys appear in to_dict, so reports
+    # without exceptions keep their pre-feature shape.
+    excepted: list = field(default_factory=list)
+    exception_notes: list = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:
@@ -177,6 +186,25 @@ class ScanResult:
         }
         if self.claims:
             data["claims_check"] = [c.to_dict() for c in self.claims]
+        if self.excepted:
+            data["excepted_findings"] = [
+                {
+                    "rule": e.finding.rule,
+                    "severity": e.finding.severity,
+                    "file": e.finding.file,
+                    "line": e.finding.line,
+                    "reason": e.finding.reason,
+                    "evidence": e.finding.evidence,
+                    "count": e.finding.count,
+                    "owasp": RULES_BY_ID[e.finding.rule].owasp,
+                    "excepted": True,
+                    "exception_reason": e.reason,
+                    "exception_expires": e.expires,
+                }
+                for e in self.excepted
+            ]
+        if self.exception_notes:
+            data["exception_notes"] = list(self.exception_notes)
         return data
 
 
