@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .claims import check_claims, extract_claims
+from .manifests import scan_manifest
 from .rules import LINE_RULES, RULES_BY_ID
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
@@ -7588,6 +7589,7 @@ def scan_folder(root: Path) -> ScanResult:
     read_at: tuple[str, int] | None = None
     disclose_at: tuple[str, int] | None = None
     prose_docs: list[tuple[str, str]] = []
+    json_docs: list[tuple[str, str]] = []
     # v0.5 LURE_WITH_BYPASS combination inputs: first hit per
     # (rule, file) — the combination now also judges PROXIMITY.
     chain_pos: dict[str, int] = {}
@@ -7907,6 +7909,8 @@ def scan_folder(root: Path) -> ScanResult:
             _env_injection_findings(rel, text, scan_lines, add)
             _substitution_exec_findings(rel, scan_lines, add, doc,
                                         comment_spans, string_spans)
+            if suffix == ".json":
+                json_docs.append((rel, text))
             if doc:
                 prose_docs.append((rel, text))
                 _prose_download_run_findings(rel, text, add)
@@ -8035,6 +8039,17 @@ def scan_folder(root: Path) -> ScanResult:
         if c_line is not None and abs(c_line - b_line) <= 40:
             add("LURE_WITH_BYPASS", rel_f, b_line)
             break
+
+    # Manifest pass: MCP tool descriptions are an instruction
+    # channel in metadata form. Any JSON file that parses as a
+    # tool manifest gets its description strings (tool-level and
+    # inputSchema field descriptions, decoded) checked with the
+    # manifest anchors in manifests.py.
+    for rel_json, json_text in json_docs:
+        try:
+            scan_manifest(rel_json, json_text, add)
+        except Exception:
+            continue  # degrade, never crash the scan (review F10)
 
     # Claims check ("says vs does"): the absolute capability claims
     # in SKILL.md ("makes no network calls", "read-only", "does not

@@ -4,6 +4,24 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
+## Unreleased
+
+- **MCP tool-description scanning (the manifest pass).** JSON
+  manifests are now parsed structurally and every tool
+  description — including inputSchema field descriptions — is
+  checked in its decoded form. New rules:
+  `MCP_DESCRIPTION_POISONING` (block: concealment from the user,
+  or a credential store inside an instruction frame with a
+  send/pass-along/access verb) and
+  `MCP_DESCRIPTION_INSTRUCTION` (caution: cross-tool steering,
+  instruction overrides). Decoded descriptions also run the
+  HIDDEN_TEXT and NON_ENGLISH_INSTRUCTION tripwires, catching
+  characters and phrases delivered as JSON escapes. Manifest
+  descriptions join the opt-in `--llm` lane as a labelled
+  prose surface. Two rules added (61 → 63). Fixtures:
+  `run_feat_manifest_tests.py` (28 cases) plus samples
+  `samples/bad/mcp-poisoned` and `samples/caution/mcp-steering`.
+
 ## v0.7.1 — 2026-11-14
 
 - **Claims check ("says vs does").** The scanner now reads the

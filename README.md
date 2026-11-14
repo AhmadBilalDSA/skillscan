@@ -237,11 +237,14 @@ for v0.7.1, 2026-11-14):
 - **The feature programme is in progress.** Landed in v0.7.1:
   the claims check (the scanner now checks what a skill's
   SKILL.md claims about itself against what the scan found).
-  Still to come in the programme: MCP tool-description
-  scanning, a change-watch (pin and re-check) mode, a
-  combination scan across the skills in a folder, and
-  per-project exceptions with reasons. Each item lands only
-  after the full test suites and an adversarial review pass.
+  Landed since, not yet in a release: MCP tool-description
+  scanning (manifest descriptions are checked for poisoning
+  and steering, and join the `--llm` lane as a labelled
+  surface). Still to come in the programme: a change-watch
+  (pin and re-check) mode, a combination scan across the
+  skills in a folder, and per-project exceptions with
+  reasons. Each item lands only after the full test suites
+  and an adversarial review pass.
 - **The LLM-lane improvement programme is in progress.** Two
   queued experiments — a purpose-consistency second pass and
   HTML-comment surfacing — are being signal-tested on
@@ -268,7 +271,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
 
 ## Rules
 
-61 deterministic rules. Any block-severity hit makes the verdict BLOCK;
+63 deterministic rules. Any block-severity hit makes the verdict BLOCK;
 otherwise any caution hit makes it CAUTION; otherwise PASS. Every rule
 also carries an OWASP mapping (LLM Top 10 / MCP Top 10 category codes),
 surfaced per finding in JSON output and in SARIF rule metadata — it is
@@ -337,6 +340,8 @@ triage metadata only and never affects the verdict.
 | SCAN_INCOMPLETE | caution | Some content could not be scanned, or nothing was scanned — the verdict is partial. Includes compiled code with no inspectable source: a `.pyc` with no matching `.py`, or a native binary in a folder with no source at all |
 | CLAIM_CONTRADICTED | caution | The skill's own SKILL.md claims it does not do something (no network, read-only, no credential access, no command execution, no persistence) that the scan found it doing — see the report's "Says vs does" section. Conditional claims ("can optionally…") are disclosures and never fire |
 | CLAIM_EXFIL_CONTRADICTION | block | A no-network or no-credential claim in SKILL.md contradicted by the exfiltration shape itself (credential material plus a send channel): the description denies the exact behaviour the scan proved |
+| MCP_DESCRIPTION_INSTRUCTION | caution | An MCP tool description steers the agent beyond the tool's own function: cross-tool preference ("always use this tool instead of…"), instruction overrides, or a credential store named inside an instruction |
+| MCP_DESCRIPTION_POISONING | block | The tool-poisoning shape in an MCP tool description: it tells the agent to keep actions hidden from the user, or to read a credential store (SSH keys, `.env`, credential files) and pass its contents along |
 
 Every rule ships with a plain-English reason in the report, so a
 non-specialist can understand *why* something was flagged.
@@ -458,7 +463,7 @@ python3 run_v06fix2_tests.py   # v0.6 fix wave 2: demotion hardening (code-only 
 
 [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) maps 25 techniques
 from four published audits of real malicious skills / MCP servers
-against the 61 rules above. Summary (Covered / Partial / Gap per audit):
+against the 63 rules above. Summary (Covered / Partial / Gap per audit):
 
 | Audit | Covered | Partial | Gap |
 |-------|---------|---------|-----|
@@ -539,62 +544,36 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2026 RakTikoo.
 
 ## Status
 
-v0.5. v0.1 was a Week 1 spike hardened by adversarial review; v0.2 adds
-secret detection, cloud-metadata and browser-store rules, raw-socket
-reverse-shell detection, error-leak detection, npm/PyPI package
-targets, Cursor-rules handling, repo-URL scanning, SARIF output, and
-toolchain integration (GitHub Action + pre-install hook). v0.3 adds
-concealment mechanics (zero-width / Unicode Tags / BiDi characters,
-instruction-carrying HTML comments, Markdown hiding places),
-non-English instruction phrases in 14 languages, shell-substitution
-execution, sends through session/client objects, compiled-code
-coverage honesty (bytecode or native binaries with no inspectable
-source can no longer read as clean), environment-injection shapes
-(LD_PRELOAD and friends, predictable temp files), and OWASP mapping
-metadata on every rule. v0.4 is the benchmark fix wave (measured
-against MaliciousSkillBench): dependency-source checks over package
-manifests (off-registry git/URL/path/index sources caution; the same
-paired with install-time execution blocks), Node http/https network
-coverage and a JS download-and-run rule, an install-prose
-refinement — documentation naming a registry package no longer
-cautions, while URL/archive/custom-index installs flag in prose and
-code alike — plus the v0.3 re-run's ranked fixes: executing
-substitutions inside documentation are capped at CAUTION (they are
-code-fence examples; the same shape in a script still blocks),
-directive-shaped HTML comments (agent-addressed orders in framing
-vocabulary) caution again, a prose download-and-run chain rule for
-download+execute instructions split across steps, and a
-read-and-disclose combination for skills whose code reads files
-while their prose sends the contents out. v0.5 is the standalone-
-coverage wave (still zero-dependency, offline, deterministic):
-prose fetch-and-execute / pipe-to-shell / read-and-send chains,
-a safety-bypass rule whose combination with a download-and-run
-chain blocks, output-manipulation and English prompt-manipulation
-phrase families restricted to instruction surfaces (SKILL.md,
-*.mdc, tool-description JSON), a small intra-file value-flow
-analysis for Python (credential material reaching a network send
-blocks; environment secrets landing in request bodies caution),
-and an offline typosquat check for declared dependencies against
-curated top-package lists. The v0.5 fix pass (three independent
-adversarial reviews — red team, false-positive hunt, code audit —
-run against the v0.5 build) then hardened the new surface: the
-taint tracker became scope-aware and flow-sensitive, so a BLOCK
-can no longer rest on a cross-function name collision or a
-reassigned variable; taint now survives container writes and
-ordinary method chains (`.strip()`, `.hex()`); the
-lure combination now requires its two halves to sit in the same
-file, near each other, outside warning/training framing (five
-benign guides the build blocked now pass); output-manipulation
-guards judge frame structure instead of keywords, closing
-"this is just an example" laundering; disclose/read-send
-suppression is judged per sentence, so a user's-own-data frame
-no longer covers sending the same data to a named external
-address; and the typosquat extractor now reads bare unpinned
-names, setup.py, and Cyrillic-lookalike names. Expect false
-positives and false negatives; the rule set and corpus are the starting
-point, not the finished product. Issues and new evasion samples are
-welcome — a mutation that evades SkillScan is a valuable contribution.
+Current release: **v0.7.1** (2026-11-14). SkillScan began as a
+Week 1 spike; every version since has passed the full test
+suites and an independent adversarial review before it was
+pushed. The short history: v0.1–v0.2 built the deterministic
+rule core (live-secret detection, cloud metadata, browser
+credential stores, reverse shells, SARIF output, the GitHub
+Action and the pre-install hook); v0.3 added concealment
+mechanics (zero-width / Unicode Tags / BiDi characters, hidden
+Markdown) and non-English instruction phrases, now in 15
+languages; v0.4 and v0.5 were measured fix waves against the
+public MaliciousSkillBench corpus — dependency-source checks,
+prose instruction chains, a small intra-file value-flow
+analysis, the output-manipulation family — reaching the catch
+figures in the benchmark section above at zero false BLOCKs on
+the benign set; v0.6 added agent-configuration and
+agent-credential-read coverage. v0.7 added the opt-in `--llm`
+mode (a separate, clearly labelled second opinion; the offline
+verdict is never rewritten). v0.7.1 completed ERROR_INFO_LEAK
+for JavaScript/TypeScript and added the claims check — the
+scanner now reads what a skill's SKILL.md claims about itself
+and reports where the scan disagrees.
 
+On `main`, not yet in a release: MCP tool-description
+scanning (63 deterministic rules), with the rest of the
+feature programme — change watch, combination scan,
+exceptions with reasons — tracked in the "What remains open"
+block above. Expect false positives and false negatives; the
+rule set and corpus are a starting point, not a finished
+product. Issues and new evasion samples are welcome — a
+mutation that evades SkillScan is a valuable contribution.
 
 ---
 

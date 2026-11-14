@@ -92,6 +92,8 @@ _OWASP_MAP: dict[str, str] = {
     "ENV_INJECTION_INSTALL": "LLM03, MCP04, MCP05",
     "CLAIM_CONTRADICTED": "LLM01",
     "CLAIM_EXFIL_CONTRADICTION": "LLM01, LLM02",
+    "MCP_DESCRIPTION_INSTRUCTION": "LLM01, MCP04",
+    "MCP_DESCRIPTION_POISONING": "LLM01, MCP04",
 }
 
 
@@ -671,6 +673,24 @@ RULES: list[Rule] = [
         "qualified in a way this checker could not see, the "
         "behaviour is still real — read the code before installing.",
         r"(?!)never-matches-line-level",  # claims check, claims.py
+    ),
+    _rule(
+        "MCP_DESCRIPTION_INSTRUCTION", "caution",
+        "An MCP tool description steers the agent's behaviour "
+        "beyond the tool's own function: cross-tool preference, "
+        "instruction overrides, or a credential store named inside "
+        "an instruction. Descriptions should say what the tool "
+        "does, not direct the agent.",
+        r"(?!)never-matches-line-level",  # manifest pass, manifests.py
+    ),
+    _rule(
+        "MCP_DESCRIPTION_POISONING", "block",
+        "An MCP tool description carries the tool-poisoning shape: "
+        "it tells the agent to keep actions hidden from the user, "
+        "or to read a credential store and pass its contents "
+        "along. The description is metadata the agent obeys — "
+        "treat the server as malicious.",
+        r"(?!)never-matches-line-level",  # manifest pass, manifests.py
     ),
     _rule(
         "CLAIM_EXFIL_CONTRADICTION", "block",

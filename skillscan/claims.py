@@ -62,13 +62,20 @@ _NETWORK_RULES = {
     "PROSE_READ_SEND", "READ_AND_DISCLOSE", "CLOUD_METADATA_ACCESS",
     "TAINTED_SEND", "SECRET_FLOW", "EXFIL_COMBINATION",
     "CLOUD_METADATA_EXFIL",
+    # A poisoned MCP tool description IS the behaviour-shaping
+    # artifact: a skill claiming "no network use" while one of
+    # its manifests instructs the agent to read-and-send is
+    # contradicted. (Not added to EXFIL_RULES: the BLOCK upgrade
+    # stays reserved for proven code-level exfiltration; the
+    # poisoning finding itself already blocks the scan.)
+    "MCP_DESCRIPTION_POISONING",
 }
 _CREDENTIAL_RULES = {
     "SSH_CREDENTIAL_READ", "AGENT_CREDENTIAL_READ",
     "CLOUD_CREDENTIAL_READ", "ENV_FILE_READ", "BROWSER_CREDENTIAL_STORE",
     "CREDENTIAL_ENUMERATION", "ENVIRON_SECRET_ACCESS",
     "EXFIL_COMBINATION", "CLOUD_METADATA_EXFIL", "TAINTED_SEND",
-    "SECRET_FLOW",
+    "SECRET_FLOW", "MCP_DESCRIPTION_POISONING",
 }
 _CREDENTIAL_STORE_RULES = {
     # The skill's own files literally contain credential material:

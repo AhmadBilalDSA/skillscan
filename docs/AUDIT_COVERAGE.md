@@ -1181,7 +1181,8 @@ labelled, additive second opinion, never a replacement judge.
   differ. Prose is sent to a third-party provider — that is a
   privacy trade the user opts into per run; nothing is sent in
   offline mode, ever. Only prose surfaces are reviewed (stage 1);
-  MCP tool descriptions in JSON manifests are not yet in the lane.
+  MCP tool descriptions in JSON manifests join the lane as a
+  labelled surface with the unreleased manifest pass (below).
   Review coverage is capped (12 files, 60k chars) and any
   unreviewed file is named in the report. Accuracy against live
   models is measured in two tiers (2026-11-12/13): a
@@ -1288,12 +1289,61 @@ MCP servers are actually written in — was not detected.
   used as pure data that quotes a catch shape could in principle
   fire — none was found in the benign corpus or fixtures.
 
+## Unreleased additions — MCP tool-description scanning
+
+Tool poisoning lives in metadata: an MCP manifest's tool
+descriptions (and inputSchema field descriptions) are read by
+the agent as guidance, so a description can instruct the agent
+to read credential files, prefer one tool over another, or
+keep actions hidden from the user — without any SKILL.md prose
+carrying the instruction. The manifest pass
+(`skillscan/manifests.py`) parses JSON manifests structurally
+and checks the DECODED description strings:
+
+- `MCP_DESCRIPTION_POISONING` (**block**) — concealment-from-
+  the-user markers, or a credential-store target (SSH keys,
+  `.env`, credential files/stores) inside an instruction frame
+  with a send / pass-along / access verb.
+- `MCP_DESCRIPTION_INSTRUCTION` (**caution**) — cross-tool
+  steering, instruction overrides, or a credential store named
+  inside an instruction frame without the send/access shape.
+- The decoded strings also run the mechanical tripwires where
+  decoding adds signal the raw-text pass cannot see
+  (`HIDDEN_TEXT` for invisible characters delivered as JSON
+  `\uXXXX` escapes; `NON_ENGLISH_INSTRUCTION` reusing the
+  per-language phrase data).
+
+Manifest descriptions also join the opt-in `--llm` lane as a
+labelled prose surface (the descriptions rendered as text,
+never the raw JSON). Discipline: a bare "API key" is not a
+credential-store target (API tools legitimately discuss the
+user's key); declarative descriptions of a tool's own function
+never fire; descriptions telling the USER how to use the tool
+are not steering. Evidence: `run_feat_manifest_tests.py`
+(28 cases) and samples `samples/bad/mcp-poisoned` (BLOCK) and
+`samples/caution/mcp-steering` (CAUTION). Matching discipline
+(adversarially reviewed; the naive version fired on legitimate
+manifests): anchors combine only within a sentence; negated
+sentences ("never reads your .env") are assurances, quoted
+text is not an instruction, and sentences routing through the
+user (consent, user-provided files, the user's own storage)
+do not fire the credential shapes. Honest limits: only the
+standard `tools` list shape (and the `result.tools`
+envelope) is read; a poisoning shape split across two
+different TOOLS in one manifest is not combined (that is the
+combination scan's territory); anchor matching reads the
+first and last windows of very long descriptions, so burial
+in the deep middle can escape; languages without a phrase
+file (Vietnamese, as of this writing) get no tripwire;
+findings cite the line of the description key, which is
+approximate when a manifest carries many descriptions.
+
 ---
 
 *Map compiled from the four audits above and the scanner source
 (`skillscan/rules.py`, `skillscan/scanner.py`, and — for the opt-in
 LLM lane — `skillscan/llm.py`) and test suites as of
-v0.7.1, with the v0.7.1 additions and the claims-check section
-above. If a rule or a sample changes, this map must change
+v0.7.1, with the v0.7.1 additions, the claims-check section
+and the unreleased manifest-pass section above. If a rule or a sample changes, this map must change
 with it — a coverage claim without a suite behind it is exactly
 the kind of thing this document exists to prevent.*

@@ -39,6 +39,12 @@ EXPECTED = {
     # Claims to be read-only but deletes the files it summarises:
     # FILE_DELETE plus the claims check's CLAIM_CONTRADICTED.
     "samples/caution/claims-understated": ("CAUTION", 1),
+    # MCP manifest whose tool descriptions steer the agent
+    # (cross-tool preference) — caution, not block.
+    "samples/caution/mcp-steering": ("CAUTION", 1),
+    # MCP manifest with a poisoned tool description (read the
+    # SSH key, pass it along) — block.
+    "samples/bad/mcp-poisoned": ("BLOCK", 2),
 }
 
 # Rules that must fire for a sample (checked on top of the verdict).
@@ -48,6 +54,8 @@ MUST_FIRE = {
     "samples/caution/shell-automation": {"SHELL_SUBPROCESS", "FILE_DELETE"},
     "samples/caution/batch-renamer": {"SHELL_SUBPROCESS", "FILE_DELETE"},
     "samples/caution/claims-understated": {"FILE_DELETE", "CLAIM_CONTRADICTED"},
+    "samples/caution/mcp-steering": {"MCP_DESCRIPTION_INSTRUCTION"},
+    "samples/bad/mcp-poisoned": {"MCP_DESCRIPTION_POISONING"},
 }
 
 

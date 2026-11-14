@@ -75,6 +75,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__ as _PACKAGE_VERSION
+from . import manifests as _manifests
 from . import scanner as _scanner
 
 RULE_ID = "LLM_STEERING"
@@ -289,7 +290,8 @@ def _collect_prose(root: Path, priority: list[str]) -> tuple[list[tuple[str, str
     sink: list = []
     found: dict[str, str] = {}
     for path in _scanner._iter_files(root, sink):
-        if path.suffix.lower() not in PROSE_EXTENSIONS:
+        suffix = path.suffix.lower()
+        if suffix not in PROSE_EXTENSIONS and suffix != ".json":
             continue
         try:
             raw = path.read_bytes()
@@ -299,6 +301,17 @@ def _collect_prose(root: Path, priority: list[str]) -> tuple[list[tuple[str, str
             continue
         text = _scanner._decode(raw)
         if text is None:
+            continue
+        if suffix == ".json":
+            # MCP manifests join the lane as a labelled surface:
+            # the tool descriptions, rendered as prose — never the
+            # raw JSON. A JSON file that is not a manifest with
+            # descriptions is not a prose surface.
+            surface = _manifests.render_surface(
+                str(path.relative_to(root)), text)
+            if surface is None:
+                continue
+            found[str(path.relative_to(root))] = surface
             continue
         found[str(path.relative_to(root))] = text
     total = len(found)
