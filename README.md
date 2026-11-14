@@ -68,6 +68,7 @@ python3 skillscan.py <path-to-skill-folder>               # shim, same thing
 python3 -m skillscan <path-to-skill-folder> --llm         # + optional LLM review (see Modes)
 python3 -m skillscan <path-to-skill-folder> --pin pin.json      # fingerprint it (see Change watch)
 python3 -m skillscan <path-to-skill-folder> --check-pin pin.json # later: what changed?
+python3 -m skillscan <path-to-skills-folder> --combine          # judge a folder of skills as a set
 ```
 
 Repo URLs: only `https://github.com/<owner>/<repo>` is accepted.
@@ -156,6 +157,30 @@ those as changed entries. Keep pins *outside* the folder
 they fingerprint: a pin inside it can be rewritten by the
 same hand that changed the folder, and `--pin` warns when
 asked to write one there.
+
+### Combination scan (--combine)
+
+Skills rarely run alone — an agent runs a set of them, and
+a harmful capability can be split across two members: one
+skill reads credentials, another sends data off the machine;
+one deletes files, another installs persistence. Each is a
+caution on its own; together they are the shape of an
+attack. Point `--combine` at a folder whose immediate
+subfolders are skills (each containing a `SKILL.md`) and it
+scans every member on its own — each solo verdict reported
+exactly as a solo scan would give it, never softened and
+never raised — then adds a **combinations** section listing
+the cross-skill capability pairs it found. Combinations are
+caution-class reporting: they never produce a BLOCK, and a
+pair is reported only when the two halves live in different
+skills (a single skill holding both halves is the solo
+scan's business, and is not double-counted here). The exit
+code is the worst member's exit code. Two pair families are
+checked: credential-read × network-send (with a tighter
+variant — stored-credential readers pair with any network
+capability at all, while a bare fetch next to a weaker
+credential read does not fire), and file-delete ×
+persistence.
 
 ## Modes: offline (default) and LLM review (opt-in)
 
@@ -278,12 +303,13 @@ for v0.7.1, 2026-11-14):
   Landed since, not yet in a release: MCP tool-description
   scanning (manifest descriptions are checked for poisoning
   and steering, and join the `--llm` lane as a labelled
-  surface) and the change watch (`--pin` / `--check-pin`:
-  fingerprint a folder, later diff it — the rug-pull guard).
-  Still to come in the programme: a combination scan across
-  the skills in a folder, and per-project exceptions with
-  reasons. Each item lands only after the full test suites
-  and an adversarial review pass.
+  surface), the change watch (`--pin` / `--check-pin`:
+  fingerprint a folder, later diff it — the rug-pull guard),
+  and the combination scan (`--combine`: a folder of skills
+  judged as a set, with cross-skill capability pairs
+  reported). Still to come in the programme: per-project
+  exceptions with reasons. Each item lands only after the
+  full test suites and an adversarial review pass.
 - **The LLM-lane improvement programme is in progress.** Two
   queued experiments — a purpose-consistency second pass and
   HTML-comment surfacing — are being signal-tested on
@@ -606,9 +632,10 @@ scanner now reads what a skill's SKILL.md claims about itself
 and reports where the scan disagrees.
 
 On `main`, not yet in a release: MCP tool-description
-scanning (63 deterministic rules) and the change watch
-(`--pin` / `--check-pin`), with the rest of the feature
-programme — combination scan, exceptions with reasons —
+scanning (63 deterministic rules), the change watch
+(`--pin` / `--check-pin`), and the combination scan
+(`--combine`), with the rest of the feature
+programme — exceptions with reasons —
 tracked in the "What remains open" block above. Expect false positives and false negatives; the
 rule set and corpus are a starting point, not a finished
 product. Issues and new evasion samples are welcome — a

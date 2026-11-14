@@ -51,6 +51,24 @@ suites and an adversarial review before it was pushed.
   writes inside its own folder shows as changed entries.
   No rules added. Fixtures: `run_feat_pinwatch_tests.py`
   (40 cases).
+- **Combination scan (`--combine`).** Pointed at a folder
+  whose immediate subfolders are skills (each containing a
+  `SKILL.md`), it scans every member on its own — solo
+  verdicts reported exactly as solo scans give them, never
+  softened and never raised — and reports cross-skill
+  capability pairs at caution class: credential-read ×
+  network-send, stored-credential-read × any network
+  capability, and file-delete × persistence. A pair is
+  reported only when the two halves live in different
+  skills, and each pair of skills is reported once per
+  family, so nothing is double-counted. The exit code is
+  the worst member's. Socket sends count via the scanner's
+  send-channel marker; documentation mentions and plain
+  config reads do not create capabilities; folders the set
+  scan did not judge are named as coverage notes. An
+  untainted `smtplib` send stays a documented non-channel,
+  matching the solo scanner. No rules added. Fixtures:
+  `run_feat_combine_tests.py` (50 cases).
 
 ## v0.7.1 — 2026-11-14
 

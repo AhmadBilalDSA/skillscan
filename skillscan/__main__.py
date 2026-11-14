@@ -560,6 +560,17 @@ def main(argv: list[str] | None = None) -> int:
              "is identical, 2 = the scan result changed, 3 = the "
              "pin cannot be used.",
     )
+    parser.add_argument(
+        "--combine", action="store_true",
+        help="Combination scan: treat the folder as a SET of "
+             "skills (its immediate subfolders), scan each one "
+             "on its own, and report cross-skill capability "
+             "pairs (e.g. one skill reads credentials, another "
+             "sends data off the machine) as caution-class "
+             "combinations. Solo verdicts are reported "
+             "unchanged. Exit code: the worst member's code, "
+             "3 = the folder is not a set of skills.",
+    )
     args = parser.parse_args(argv)
 
     if args.pin and args.check_pin:
@@ -578,6 +589,22 @@ def main(argv: list[str] | None = None) -> int:
         print("error: --pin / --check-pin support --format text or "
               "json only", file=sys.stderr)
         return 3
+    if args.combine and (args.pin or args.check_pin):
+        print("error: --combine cannot be used with --pin / "
+              "--check-pin", file=sys.stderr)
+        return 3
+    if args.combine and args.llm:
+        print("error: --combine is offline-only and cannot be "
+              "combined with --llm", file=sys.stderr)
+        return 3
+    if args.combine and _is_url(args.folder):
+        print("error: --combine needs a local folder of skills, "
+              "not a URL", file=sys.stderr)
+        return 3
+    if args.combine and args.format not in ("text", "json"):
+        print("error: --combine supports --format text or json "
+              "only", file=sys.stderr)
+        return 3
 
     clone_root: Path | None = None
     if _is_url(args.folder):
@@ -593,6 +620,27 @@ def main(argv: list[str] | None = None) -> int:
             return 3
 
     try:
+        if args.combine:
+            # Combination scan: the target is a folder OF skills;
+            # each member gets its own ordinary offline scan, and
+            # the set report is built from those untouched
+            # results. No member scan is altered by the mode.
+            from . import combine as _cb
+
+            try:
+                set_result = _cb.scan_set(target)
+            except _cb.SetError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 3
+            except Exception as exc:  # never a traceback
+                print(f"error: set scan failed: "
+                      f"{type(exc).__name__}: {exc}", file=sys.stderr)
+                return 3
+            if args.format == "json":
+                print(json.dumps(set_result.to_dict(), indent=2))
+            else:
+                print(_cb.render_set(set_result))
+            return set_result.exit_code
         try:
             result = scan_folder(target)
         except Exception as exc:  # never answer a folder with a traceback

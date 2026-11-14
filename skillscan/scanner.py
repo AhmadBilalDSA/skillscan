@@ -75,6 +75,24 @@ CREDENTIAL_RULES = {
 }
 SEND_RULES = {"NETWORK_SEND_DATA"}
 SECRET_NAME_RE = re.compile(r"(key|token|secret|password|passwd|credential|auth)", re.IGNORECASE)
+# Credential-STORE material: the store alternatives of the
+# BROWSER_CREDENTIAL_STORE rule's own pattern, minus the bare
+# browser-launcher token (`google-chrome`), plus profile
+# Cookies files. Used only for ScanResult.gate_signals (see
+# below): a browser-store finding counts as store access when
+# some hit named store material, not merely a browser.
+STORE_MATERIAL_RE = re.compile(
+    r"(Login Data\b|logins\.json|key4\.db|cookies\.sqlite|"
+    r"Local State\b|Local Extension Settings|"
+    r"nkbihfbeogaeaoehlefnkodbefgpgknn|wallet\.dat|\.electrum\b|"
+    r"BraveSoftware|Chrome[/\\]User Data|Edge[/\\]User Data|"
+    r"mozilla[/\\]firefox|User Data[/\\](Default|Profile)|"
+    r"[/\\]Cookies\b)")
+# Rules whose findings carry gate signals (combine.py's
+# capability gates judge ALL hits of a finding, not just the
+# first hit's evidence snippet).
+_GATE_SIGNAL_RULES = frozenset(
+    {"ENVIRON_SECRET_ACCESS", "BROWSER_CREDENTIAL_STORE"})
 NEGATION_RE = re.compile(
     r"\b(never|not|no|don'?t|do not|does not|refuse[sd]?|avoid|warning|forbidden|prohibited)\b",
     re.IGNORECASE,
@@ -111,6 +129,23 @@ class ScanResult:
     # and then the key is absent from to_dict, so reports for
     # claim-free skills keep their pre-feature shape exactly.
     claims: list = field(default_factory=list)
+    # Send-channel marker: True when the analysis resolved any
+    # send channel in the skill (an HTTP send, a raw socket
+    # send, an SMTP send, ...), whether or not a rule fired on
+    # it. Consumed by the combination scan (combine.py), whose
+    # capability derivation would otherwise miss sends no rule
+    # names. Deliberately NOT rendered and NOT in to_dict:
+    # solo reports are unchanged by its presence.
+    has_send_channel: bool = False
+    # Gate signals for the combination scan: per (rule, file),
+    # whether ANY hit of that finding — not just the first,
+    # whose evidence snippet is what a Finding keeps — named a
+    # secret-shaped variable ("secret-name") or credential-
+    # store material ("store-material"). combine.py's
+    # capability gates consume this so a benign first hit
+    # cannot mask a credential hit later in the same file.
+    # Deliberately NOT rendered and NOT in to_dict.
+    gate_signals: dict = field(default_factory=dict)
 
     @property
     def exit_code(self) -> int:
@@ -509,7 +544,8 @@ def _check_credential_value(value: str, rel: str, line: int, add,
             and not _PLACEHOLDER_ENV_RE.search(value):
         add("ENV_FILE_READ", rel, line)
     if any(fragment in value for fragment in _BROWSER_STORE_FRAGMENTS):
-        add("BROWSER_CREDENTIAL_STORE", rel, line)
+        add("BROWSER_CREDENTIAL_STORE", rel, line,
+            signal_text=value)
     # Agent credential stores (v0.6) fire only in a genuine READ
     # context (agent_read): a folded value that merely CONSTRUCTS
     # or references the path — an assignment, a Path(...) join, an
@@ -1539,7 +1575,7 @@ def _taint_findings_inner(tree: ast.AST, sym: _Symbols, rel: str,
 
 
 def _ast_findings(path: Path, rel: str, text: str, add, flags: dict,
-                  note=None) -> set[int]:
+                  note=None, note_signal=None) -> set[int]:
     """AST checks for one Python file. `flags` is the SCAN-scoped dict —
     only the "send" flag is allowed to merge outward into it (a send in
     any file is a send channel for the whole skill). decode / run_sink /
@@ -1577,12 +1613,26 @@ def _ast_findings(path: Path, rel: str, text: str, add, flags: dict,
             continue
         if isinstance(node, ast.Subscript):
             if _resolve(node.value, sym) == "os.environ":
-                add("ENVIRON_SECRET_ACCESS", rel, node.lineno)
+                add("ENVIRON_SECRET_ACCESS", rel, node.lineno,
+                    signal_text=_fold_str(node.slice, sym) or "")
             continue
         if isinstance(node, ast.Attribute):
             if _resolve(node, sym) == "os.environ":
                 add("ENVIRON_SECRET_ACCESS", rel, node.lineno)
             continue
+        if isinstance(node, ast.Call) and note_signal is not None:
+            # Environ accessor calls: the finding itself comes
+            # from the line pass, but a formatter-wrapped call
+            # puts the key on the next line, where no line pass
+            # can see it. Contribute the folded key as a
+            # signal only — findings and counts are untouched.
+            if (_resolve(node.func, sym) in
+                    ("os.getenv", "os.environ.get")
+                    or _raw_dotted(node.func) in
+                    ("getenv", "environ.get")) and node.args:
+                key = _fold_str(node.args[0], sym)
+                if key:
+                    note_signal("ENVIRON_SECRET_ACCESS", rel, key)
         if not isinstance(node, ast.Call):
             continue
 
@@ -1926,7 +1976,7 @@ def _manifest_findings(rel: str, text: str, lines: list[str], add, note=None) ->
                         # every run — install-context, so it blocks.
                         add("ENV_INJECTION_INSTALL", rel, _find_line(lines, str(key)))
                     if SECRET_NAME_RE.search(str(key)):
-                        add("ENVIRON_SECRET_ACCESS", rel, _find_line(lines, str(key)))
+                        add("ENVIRON_SECRET_ACCESS", rel, _find_line(lines, str(key)), signal_text=str(key))
 
     tools = data.get("tools")
     if isinstance(tools, list):
@@ -7597,8 +7647,31 @@ def scan_folder(root: Path) -> ScanResult:
     # Lines PROSE_READ_SEND claimed, per file (PIE dedupe).
     claimed_send: dict[str, set[int]] = {}
 
-    def add(rule_id: str, rel: str, line: int, evidence: str = "", severity_cap: str | None = None) -> None:
+    def note_gate_signal(rule_id: str, rel: str, text: str) -> None:
+        """Accumulate a combination-scan gate signal for one
+        hit's judged text (see ScanResult.gate_signals). Used
+        by add() for every hit, and directly by passes whose
+        judged text never becomes a finding's evidence (the
+        AST environ accessors) — a signal-only contribution
+        that never touches findings or their counts."""
+        if rule_id not in _GATE_SIGNAL_RULES or not text:
+            return
+        signals = result.gate_signals.setdefault((rule_id, rel), set())
+        if SECRET_NAME_RE.search(text):
+            signals.add("secret-name")
+        if STORE_MATERIAL_RE.search(text):
+            signals.add("store-material")
+
+    def add(rule_id: str, rel: str, line: int, evidence: str = "", severity_cap: str | None = None, signal_text: str | None = None) -> None:
         nonlocal send_at, cred_at, metadata_at
+        # Judge every hit, not just the first: gate signals
+        # accumulate across all hits of a (rule, file).
+        # signal_text carries names the evidence slot cannot
+        # (e.g. an AST-folded value or key); it is used ONLY
+        # for the signals and never stored on the finding.
+        note_gate_signal(
+            rule_id, rel,
+            signal_text if signal_text is not None else evidence)
         rule = RULES_BY_ID[rule_id]
         severity = rule.severity
         if severity_cap == "caution" and severity == "block":
@@ -7764,7 +7837,8 @@ def scan_folder(root: Path) -> ScanResult:
             try:
                 metadata_send_lines = _ast_findings(
                     path, rel, text, add, flags,
-                    note=result.skipped.append)
+                    note=result.skipped.append,
+                    note_signal=note_gate_signal)
             except Exception:
                 # Deeply nested / pathological syntax trees can defeat the
                 # AST analyser (e.g. recursion limits). Line rules below
@@ -7859,7 +7933,12 @@ def scan_folder(root: Path) -> ScanResult:
                     continue
                 for rule in LINE_RULES:
                     if rule.pattern.search(line_text[:MAX_LINE_CHARS]):
-                        add(rule.id, rel, lineno, lines[lineno - 1])
+                        # The squeezed text is what this pass
+                        # judged; it is also the gate-signal text
+                        # (the stored evidence stays the original
+                        # line, as before).
+                        add(rule.id, rel, lineno, lines[lineno - 1],
+                            signal_text=line_text)
             # fetch(url, {method: "POST", body}) spanning lines.
             if "fetch(" in text and re.search(
                     r"method\s*:\s*[\"'](POST|PUT|PATCH)[\"']", text):
@@ -7948,6 +8027,8 @@ def scan_folder(root: Path) -> ScanResult:
 
         if "send" in flags and send_at is None:
             send_at = flags["send"]
+
+    result.has_send_channel = send_at is not None or "send" in flags
 
     # Scan-level combination: credential access + a send channel anywhere in
     # the same skill is the exfiltration shape.

@@ -1386,12 +1386,79 @@ rewrite the folder can rewrite a pin kept inside it; keep
 pins outside the skill folder for a real guarantee —
 `--pin` warns when asked to write one inside).
 
+## Unreleased additions — combination scan (--combine)
+
+A solo scan judges one skill; an agent runs a set. The
+combination scan (`skillscan/combine.py`) scans every
+member of a skill set (immediate subfolders containing a
+SKILL.md), derives per-skill capabilities from the findings
+(credential-read, network-send, network-access, file-delete,
+persistence — rule sets kept tight: a bare `NETWORK_ACCESS`
+fetch is not a send, and only stored-credential readers
+pair with it), and reports cross-skill pairs at caution
+class. Solo verdicts are reported unchanged; a pair fires
+only across two different skills, once per family per
+ordered pair of skills, so a single skill holding both
+halves (already judged by the solo scan, e.g.
+EXFIL_COMBINATION) is never double-counted, and no solo
+BLOCK can be softened by the set view. Evidence:
+`run_feat_combine_tests.py` (50 cases): benign sets,
+the credential/send and delete/persistence pairs, the
+send-tier boundary (env-read + fetch does not fire;
+stored-credential-read + fetch does), one-skill-both-halves
+exclusion, multi-sender pair enumeration, JSON surface,
+mode discipline, determinism, and membership rules.
+Honest limits: capabilities are what the deterministic
+rules can see in each member — a capability no rule covers
+cannot pair; pairs are reported as capability
+juxtapositions for a human to judge, not as proof of
+intent; and only immediate subfolders are members (nested
+sets are not recursed into — they are named in coverage
+notes instead). Capability derivation carries three
+refinements so the labels stay honest: a finding in a
+documentation file does not by itself create a capability
+unless the rule is a prose/instruction rule;
+`ENVIRON_SECRET_ACCESS` counts only when a secret-shaped
+name appears among the finding's hits;
+`BROWSER_CREDENTIAL_STORE` counts only when some hit names
+store material, not a browser launch. Both gates judge
+ALL hits of a finding through the scanner's gate signals
+(`ScanResult.gate_signals`, non-rendered), so a benign
+first hit cannot mask a credential hit later in the same
+file, a secret past the evidence snippet's 160 characters
+still counts, and a multiline `os.environ[...]` key
+reaches the gate through the AST pass. The secret-name
+gate uses the scanner's own `SECRET_NAME_RE` vocabulary
+(key/token/secret/password/passwd/credential/auth) — the
+same vocabulary the solo scanner uses for secret-named
+environment variables; names outside it (BEARER, JWT, …)
+are treated as configuration by the gate. One more gate
+limit: JavaScript/TypeScript has no AST layer in the
+scanner, so an environ accessor whose argument wraps onto
+the next line (`process.env[` / `'NAME']`) is not visible
+to the gate; the Python equivalent IS covered, through
+the AST pass's signal-only contribution. A member whose SKILL.md is a symlink is still a
+member, scanned honestly rather than silently dropped. If
+one member's scan fails outright the set scan fails
+(exit 3) rather than reporting a partial all-clear. The
+send half also uses the scanner's send-channel marker
+(`ScanResult.has_send_channel`): a resolved socket or HTTP
+send is a send channel for pairing even when no single rule
+names it — the same flag the solo `EXFIL_COMBINATION` rule
+uses. One documented limit: an untainted `smtplib` send is
+not a send channel anywhere in SkillScan, solo or set
+(SMTP counts in the solo scanner only when credential data
+flows into it, producing `TAINTED_SEND`, which does count
+here); widening it would change solo behaviour, so it
+stays a base-scanner decision.
+
 ---
 
 *Map compiled from the four audits above and the scanner source
 (`skillscan/rules.py`, `skillscan/scanner.py`, and — for the opt-in
 LLM lane — `skillscan/llm.py`) and test suites as of
 v0.7.1, with the v0.7.1 additions, the claims-check section
-and the unreleased manifest-pass and change-watch sections above. If a rule or a sample changes, this map must change
+and the unreleased manifest-pass, change-watch and
+combination-scan sections above. If a rule or a sample changes, this map must change
 with it — a coverage claim without a suite behind it is exactly
 the kind of thing this document exists to prevent.*
