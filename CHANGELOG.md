@@ -4,7 +4,29 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
-## Unreleased
+## v0.8.0 — 2026-11-14
+
+The feature-programme release. Five differentiators, each
+built fixtures-first, adversarially reviewed, and held to a
+zero-false-BLOCK gate on benign corpora before it landed:
+
+1. **The claims check** ("says vs does") — shipped in
+   v0.7.1: the scanner reads a skill's own claims in
+   SKILL.md and reports where the scan disagrees.
+2. **MCP tool-description scanning** — new below.
+3. **The change watch** (`--pin` / `--check-pin`) — new
+   below: fingerprint a folder, later prove it has not
+   changed — the rug-pull guard.
+4. **The combination scan** (`--combine`) — new below: a
+   folder of skills judged as a set, not one by one.
+5. **Exceptions with reasons** (`--exceptions`) — new
+   below: accepted findings stay visible, with a reason
+   and an expiry, but leave the verdict.
+
+v0.7.1 also completed the JavaScript/TypeScript form of
+ERROR_INFO_LEAK, so v0.8.0 closes the programme with the
+deterministic rule count at 63 and the offline scan
+unchanged whenever a feature is not invoked.
 
 - **MCP tool-description scanning (the manifest pass).** JSON
   manifests are now parsed structurally and every tool

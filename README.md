@@ -324,7 +324,7 @@ model. The deterministic benchmark figures below are
 offline-mode numbers and do not change.
 
 **What remains open** (updated on every release; last updated
-for v0.7.1, 2026-11-14):
+for v0.8.0, 2026-11-14):
 
 - **Qwen's benign set is still being priced.** The run is
   resumable and continues daily across free-tier windows until
@@ -333,28 +333,28 @@ for v0.7.1, 2026-11-14):
   stays labelled unmeasured above, and the choice of default
   model stays open. Gemini's picture is complete: measured on
   both sets, 0 false BLOCKs, 0 added CAUTIONs.
-- **The feature programme is complete.** Landed in v0.7.1:
-  the claims check (the scanner now checks what a skill's
-  SKILL.md claims about itself against what the scan found).
-  Landed since, not yet in a release: MCP tool-description
-  scanning (manifest descriptions are checked for poisoning
-  and steering, and join the `--llm` lane as a labelled
-  surface), the change watch (`--pin` / `--check-pin`:
-  fingerprint a folder, later diff it — the rug-pull guard),
-  the combination scan (`--combine`: a folder of skills
-  judged as a set, with cross-skill capability pairs
-  reported), and exceptions with reasons (`--exceptions`:
-  findings a project accepts stay visible but leave the
-  verdict, each with a reason and an expiry). Each item
-  landed only after the full test suites and an adversarial
-  review pass.
+- **The feature programme shipped in v0.8.0.** All five
+  differentiators are in this release: the claims check
+  (landed in v0.7.1 — the scanner checks what a skill's
+  SKILL.md claims about itself against what the scan found),
+  MCP tool-description scanning (manifest descriptions are
+  checked for poisoning and steering, and join the `--llm`
+  lane as a labelled surface), the change watch (`--pin` /
+  `--check-pin`: fingerprint a folder, later diff it — the
+  rug-pull guard), the combination scan (`--combine`: a
+  folder of skills judged as a set, with cross-skill
+  capability pairs reported), and exceptions with reasons
+  (`--exceptions`: findings a project accepts stay visible
+  but leave the verdict, each with a reason and an expiry).
+  Each item landed only after the full test suites and an
+  adversarial review pass.
 - **The LLM-lane improvement programme is in progress.** Two
   queued experiments — a purpose-consistency second pass and
   HTML-comment surfacing — are being signal-tested on
   development sets. Neither ships without held-out validation
   and a clean benign gate.
 - **The deterministic coverage programme continues.** v0.7.1
-  extends ERROR_INFO_LEAK to JavaScript/TypeScript; the
+  extended ERROR_INFO_LEAK to JavaScript/TypeScript; the
   remaining documented gaps live in
   [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) and are
   worked from the daily audit watch.
@@ -647,7 +647,7 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2026 RakTikoo.
 
 ## Status
 
-Current release: **v0.7.1** (2026-11-14). SkillScan began as a
+Current release: **v0.8.0** (2026-11-14). SkillScan began as a
 Week 1 spike; every version since has passed the full test
 suites and an independent adversarial review before it was
 pushed. The short history: v0.1–v0.2 built the deterministic
@@ -667,14 +667,13 @@ mode (a separate, clearly labelled second opinion; the offline
 verdict is never rewritten). v0.7.1 completed ERROR_INFO_LEAK
 for JavaScript/TypeScript and added the claims check — the
 scanner now reads what a skill's SKILL.md claims about itself
-and reports where the scan disagrees.
-
-On `main`, not yet in a release: MCP tool-description
-scanning (63 deterministic rules), the change watch
-(`--pin` / `--check-pin`), the combination scan
-(`--combine`), and exceptions with reasons
-(`--exceptions`) — the feature programme is complete,
-with its state tracked in the "What remains open" block above. Expect false positives and false negatives; the
+and reports where the scan disagrees. v0.8.0 completed the
+feature programme: MCP tool-description scanning (63
+deterministic rules), the change watch (`--pin` /
+`--check-pin`), the combination scan (`--combine`), and
+exceptions with reasons (`--exceptions`) — each reviewed
+adversarially before it landed, with its state tracked in
+the "What remains open" block above. Expect false positives and false negatives; the
 rule set and corpus are a starting point, not a finished
 product. Issues and new evasion samples are welcome — a
 mutation that evades SkillScan is a valuable contribution.

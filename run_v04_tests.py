@@ -75,7 +75,7 @@ def main() -> int:
 
     sys.path.insert(0, str(ROOT))
     import skillscan
-    check("version-is-0.7.1", skillscan.__version__ == "0.7.1",
+    check("version-is-0.8.0", skillscan.__version__ == "0.8.0",
           skillscan.__version__)
     from skillscan.rules import RULES
     check("rule-count-63", len(RULES) == 63, f"{len(RULES)} rules")

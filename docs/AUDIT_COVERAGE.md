@@ -1182,7 +1182,7 @@ labelled, additive second opinion, never a replacement judge.
   privacy trade the user opts into per run; nothing is sent in
   offline mode, ever. Only prose surfaces are reviewed (stage 1);
   MCP tool descriptions in JSON manifests join the lane as a
-  labelled surface with the unreleased manifest pass (below).
+  labelled surface with the manifest pass (below; v0.8.0).
   Review coverage is capped (12 files, 60k chars) and any
   unreviewed file is named in the report. Accuracy against live
   models is measured in two tiers (2026-11-12/13): a
@@ -1493,8 +1493,8 @@ excepted section is always printed.
 *Map compiled from the four audits above and the scanner source
 (`skillscan/rules.py`, `skillscan/scanner.py`, and — for the opt-in
 LLM lane — `skillscan/llm.py`) and test suites as of
-v0.7.1, with the v0.7.1 additions, the claims-check section
-and the unreleased manifest-pass, change-watch,
+v0.8.0, with the v0.7.1 additions, the claims-check section
+and the manifest-pass, change-watch,
 combination-scan and exceptions sections above. If a rule or a sample changes, this map must change
 with it — a coverage claim without a suite behind it is exactly
 the kind of thing this document exists to prevent.*
