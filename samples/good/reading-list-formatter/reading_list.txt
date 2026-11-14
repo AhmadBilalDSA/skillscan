@@ -1,0 +1,4 @@
+The Alchemist
+Atomic Habits
+Clean Code
+Python Crash Course
