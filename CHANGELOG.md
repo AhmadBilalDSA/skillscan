@@ -4,25 +4,28 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
-## Unreleased
+## v0.7.1 — 2026-11-14
 
-- **Claims check ("says vs does").** The scanner now reads the
-  absolute capability claims a skill makes about itself in SKILL.md
-  ("makes no network calls", "read-only", "does not read your
-  credentials") and checks them against what the scan found. Every
-  report gains a "Says vs does" section (text, markdown and a
-  `claims_check` object in JSON) marking each claim *matches* or
-  *contradicted*, with the contradicting finding named. A
-  contradiction is a CAUTION (new rule `CLAIM_CONTRADICTED`); a
-  no-network / no-credential claim contradicted by an
-  exfiltration-class finding is a BLOCK (`CLAIM_EXFIL_CONTRADICTION`).
-  Conditional claims ("can optionally…", "by default") are treated
-  as disclosures, not claims; claims that a skill does *more* than
-  it does are never checked. Two rules added (59 → 61); skills that
-  make no absolute claims produce byte-identical reports to before.
-  Fixtures: `run_feat_claims_tests.py` (25 cases) plus samples
-  `samples/good/honest-local` and
-  `samples/caution/claims-understated`.
+One rule completed, no new rules (the count stays 59):
+
+- **ERROR_INFO_LEAK now covers JavaScript/TypeScript.** The rule
+  has caught the Python form since v0.2 — returning raw exception
+  text, a stack trace, or the whole environment from an except
+  block. The JS/TS form is now detected with the same discipline:
+  inside a try/catch block or a promise `.catch` handler, a return
+  value, an HTTP response body, or an outbound payload carrying
+  the caught error's detail fires — `err.stack` / `err.message`
+  (optional chaining included), `String(err)`, the bare error
+  object, template interpolations, and one-hop locals including
+  aliases and destructured properties. Returning or sending the
+  whole `process.env` fires anywhere, mirroring `os.environ`.
+  Local logging (the stack included), rethrowing, fixed messages,
+  and sanitised reporting fields do not fire, as before. New
+  suite `run_v07fix_tests.py`: 19 must-fire and 13 must-not-fire
+  cases, plus a self-red-team probe wave (21 of 22 as intended;
+  the miss — bracket access, `err['stack']` — is recorded as a
+  limit in `docs/AUDIT_COVERAGE.md`). All previous suites pass
+  unchanged.
 
 ## Measurement follow-up — 2026-11-14
 
