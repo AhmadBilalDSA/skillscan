@@ -1188,11 +1188,14 @@ labelled, additive second opinion, never a replacement judge.
   BLOCK+CAUTION 28.9% → 54.6%; benign false BLOCKs 0 of 280),
   and weak free-tier judges over the held-out malicious set
   (material lift under both judges; see the CHANGELOG's v0.7.0
-  entry for the numbers). One measurement remains open at this
-  release: the benign set under a weak judge, scheduled
-  2026-11-14 — the zero-false-BLOCK claim at weak-judge corpus
-  scale is therefore still pending, and this map will be
-  updated when it lands. The stub-provider suite
+  entry for the numbers). The benign set under a weak judge
+  has since been measured (2026-11-14): gemini-3.5-flash-lite
+  judged 258 of 259 held-out benign skills with 0 false
+  BLOCKs and 0 added CAUTIONs, so the zero-false-BLOCK claim
+  at weak-judge corpus scale now holds for that preset. The
+  default qwen/qwen3.8-27b preset's benign run was stopped
+  by its free-tier limit at the second call and remains
+  unmeasured at corpus scale. The stub-provider suite
   (`run_v07_tests.py`: schema discipline, grounding,
   injection-shaped prose, timeout/HTTP/key-leak paths) remains
   the regression gate for the lane's mechanics.

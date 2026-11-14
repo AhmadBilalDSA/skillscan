@@ -4,6 +4,27 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
+## Measurement follow-up — 2026-11-14
+
+The Set B benign run promised at v0.7.0 release has reported:
+
+- **Gemini preset (`gemini-3.5-flash-lite`) — complete.**
+  258 of 259 held-out benign skills judged (252 clean
+  reviews, 6 partial, 1 unavailable on a timeout): **0 false
+  BLOCKs, 0 LLM-added CAUTIONs**; combined verdicts identical
+  to the offline scan on every judged skill. The 21
+  dev-exposed trace folders also completed (16 judged, all
+  PASS). This preset is now measured on both sets.
+- **Groq preset (default `qwen/qwen3.8-27b`) — unpriced.**
+  Its free-tier lane stopped on a rate limit at the second
+  call, so the benign set was not judged under this preset.
+  Recorded as unmeasured, not as a pass or a fail; its
+  held-out Set A lift (34.1% → 43.2%) stands as measured
+  at release.
+
+No code changed in this follow-up; it completes the
+measurement record for the released version.
+
 ## v0.7.0 — 2026-11-13
 
 Stage 1 of the LLM mode, built at the owner's direction. The
@@ -144,7 +165,10 @@ optional, clearly demarcated second mode:
   current-model result and the simpler-model benign check is
   still ongoing. The deterministic benchmark figures in the
   README are offline-mode numbers and are unchanged by this
-  release.
+  release. (Follow-up, 2026-11-14: the Set B run has now
+  reported — complete and clean for the Gemini preset,
+  unpriced for the Qwen preset; see the measurement
+  follow-up at the top of this changelog.)
 
 ## v0.6.0 — 2026-11-11
 

@@ -213,9 +213,15 @@ output-manipulation family, a current-model judge lifts
 BLOCK+CAUTION from 28.9% to 54.6% with zero false BLOCKs on
 280 benign skills, and weak free-tier judges lift the held-out
 malicious set materially (Gemini Flash-Lite 37.0% → 53.4%;
-the default Qwen 34.1% → 43.2%). The benign set under a weak
-judge is still being measured — that run completes the v0.7
-picture. The deterministic benchmark figures below are
+the default Qwen 34.1% → 43.2%). The benign set has since
+been judged by a weak model: gemini-3.5-flash-lite reviewed
+258 of 259 held-out benign skills with **0 false BLOCKs and
+0 added CAUTIONs** — combined verdicts identical to offline.
+The default Qwen's benign-set run was stopped by its
+free-tier limit after 2 calls, so that preset's benign rate
+at corpus scale remains unmeasured; its malicious-set lift
+above is measured. That completes the v0.7 picture, per
+model. The deterministic benchmark figures below are
 offline-mode numbers and do not change.
 
 ## Toolchain integration
