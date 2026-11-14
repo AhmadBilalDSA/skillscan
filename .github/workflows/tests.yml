@@ -52,3 +52,7 @@ jobs:
         run: python3 run_v07fix_tests.py
       - name: "claims check (says vs does)"
         run: python3 run_feat_claims_tests.py
+      - name: "MCP tool-description scanning"
+        run: python3 run_feat_manifest_tests.py
+      - name: "change watch (pin / check-pin)"
+        run: python3 run_feat_pinwatch_tests.py
