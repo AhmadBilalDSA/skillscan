@@ -20,7 +20,7 @@ suites and an adversarial review before it was pushed.
   as disclosures, not claims; claims that a skill does *more* than
   it does are never checked. Two rules added (59 → 61); skills that
   make no absolute claims produce byte-identical reports to before.
-  Fixtures: `run_feat_claims_tests.py` (25 cases) plus samples
+  Fixtures: `run_feat_claims_tests.py` (34 cases) plus samples
   `samples/good/honest-local` and
   `samples/caution/claims-understated`.
 - **ERROR_INFO_LEAK now covers JavaScript/TypeScript**

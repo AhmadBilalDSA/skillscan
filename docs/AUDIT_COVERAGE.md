@@ -1223,8 +1223,9 @@ Discipline: conditional claims ("can optionally…", "by default")
 are disclosures, not claims; marketing phrasing is not a claim;
 claims that a skill does *more* than it does are never checked;
 quoted text and code fences are not the skill's own claims.
-Evidence: `run_feat_claims_tests.py` (25 cases: 4 must-fire, 8
-must-not-fire, output-surface checks) and samples
+Evidence: `run_feat_claims_tests.py` (34 cases: 4 must-fire, 8
+must-not-fire, 13 adversarial-review fix-wave cases, output-surface
+checks) and samples
 `samples/good/honest-local` (PASS, claims listed as matches) and
 `samples/caution/claims-understated` (CAUTION). Honest limit: the
 check can only contradict behaviour the deterministic rules can
