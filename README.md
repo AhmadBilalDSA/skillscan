@@ -639,14 +639,18 @@ codes, and exits non-zero on any failure.
 ## Benchmarks
 
 SkillScan's own measured rates on a public labelled corpus —
-**MaliciousSkillBench** (9,740 labelled skills, pinned at commit
-`893afd6`), first run 2026-11-11 with SkillScan v0.6.0 and re-run
-2026-11-14 with SkillScan **v0.8.0** — the figures below are the
-v0.8.0 run. Malicious skills
-were scanned as complete extracted folders; benign skills are shipped
-by the benchmark as frozen text, so each was scanned as a single
-`SKILL.md` folder. Nothing was executed — folders were read as text
-only. Full methodology, counting rules and caveats:
+**MaliciousSkillBench** (9,740 labelled skills: 7,505 malicious,
+2,235 benign), pinned at GitHub commit
+`893afd609be22a2dfac5a2b94bbebb4eeb99515e` and Hugging Face
+revision `d4b42ce5766a6e0359c987cf59c1007cb3795a90`. First run
+2026-11-11 with SkillScan v0.6.0; re-run 2026-11-14 with
+SkillScan **v0.8.0** (63 deterministic rules) — the figures
+below are the v0.8.0 run, made with the deterministic offline
+mode only (no `--llm`). Malicious skills were scanned as
+complete extracted folders; benign skills are shipped by the
+benchmark as frozen text, so each was scanned as a single
+`SKILL.md` folder. Nothing was executed — folders were read as
+text only. Full methodology, counting rules and caveats:
 [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 | Set | Skills | BLOCK | CAUTION | PASS |
@@ -654,11 +658,15 @@ only. Full methodology, counting rules and caveats:
 | Malicious | 7,421 | **45.8%** (3,399) | 36.6% (2,718) | 17.6% (1,304) |
 | Benign | 2,235 | 0% false BLOCKs (0) | 24.9% (557) | 75.1% (1,678) |
 
-Detection at BLOCK+CAUTION (flagged at any severity): **82.4%** of
-malicious skills; 24.9% of benign skills were flagged at any severity.
+Detection at BLOCK+CAUTION (flagged at any severity): **82.4%**
+(6,117 of 7,421) of malicious skills; 24.9% of benign skills
+were flagged at any severity, all as CAUTION. Median scan time
+was 110 ms per malicious skill (p95 801 ms) and ~43 ms per
+benign skill.
 
 Detection by attack family (multi-label membership; BLOCK /
-BLOCK+CAUTION):
+BLOCK+CAUTION). This table is identical, cell for cell, to the
+v0.6 run — see "Why the numbers did not move" below:
 
 | Family | Skills | BLOCK | BLOCK+CAUTION |
 |--------|--------|-------|---------------|
@@ -670,15 +678,48 @@ BLOCK+CAUTION):
 | Data exfiltration / disclosure | 266 | 35.0% | 83.8% |
 | Resource / availability abuse | 330 | 22.7% | 90.3% |
 | Dependency / supply chain | 167 | 13.2% | 87.4% |
+| Defense evasion / obfuscation | 20 | 10.0% | 100% |
 | Integrity / output manipulation | 97 | 1.0% | 28.9% |
+| Discovery / reconnaissance | 5 | 0.0% | 20.0% |
+| (No category assigned) | 2,591 | 24.5% | 67.6% |
+
+### Why the numbers did not move
+
+Per skill, **zero verdicts changed** between the v0.6 and
+v0.8.0 runs — none stronger, none weaker — even though the new
+machinery did fire. On 163 malicious and 16 benign folders the
+fired rule sets differ; every new fire landed on a skill
+already at that verdict or higher:
+
+- **JavaScript/TypeScript ERROR_INFO_LEAK (v0.7.1):** fires
+  rose 473 → 511 (+38, all at CAUTION severity) — 30 on skills
+  already BLOCK, 8 on skills already CAUTION.
+- **Claims check (v0.7.1):** contradictions reported on 129
+  malicious folders (126 `CLAIM_CONTRADICTED` at CAUTION tier,
+  3 `CLAIM_EXFIL_CONTRADICTION` at BLOCK tier) and 16 benign
+  folders. No verdict changed: on this corpus the check
+  corroborates verdicts the behaviour rules had already
+  reached, which is what it is for — it reports where a skill's
+  own claims disagree with the scan.
+- **MCP tool-description rules (v0.8.0):** fired **0 times**
+  corpus-wide. Only 693 of 7,421 malicious folders contain any
+  `.json` file at all, and only 12 contain a `"tools"` key —
+  the MCP tool-manifest shape the two rules inspect. This
+  corpus predates MCP tool-description poisoning as a shipped
+  attack shape, so this benchmark can neither confirm nor
+  refute those rules; their evidence is their fixture suites
+  and the repo samples.
+- `--combine`, `--pin` / `--check-pin` and `--exceptions` are
+  separate modes a plain folder scan never exercises, so this
+  run says nothing about them either way.
 
 Honest limits, stated plainly:
 
-- **Most misses are prose-only skills.** 886 of the 1,304 missed
-  malicious skills are a single `SKILL.md` with no code at all. Among
-  *pure* instruction-manipulation skills the BLOCK rate is 8.8%, and
-  pure output manipulation is ~1% — deterministic rules see behaviour
-  shapes, not meaning.
+- **Most misses are prose-only skills.** 1,304 malicious
+  skills still PASS; 886 of them are a single `SKILL.md` with
+  no code at all. Among *pure* instruction-manipulation skills
+  the BLOCK rate is 8.8%, and pure output manipulation is ~1%
+  — deterministic rules see behaviour shapes, not meaning.
 - **The benign side is prose-only** (see above), so the false-BLOCK
   figure measures prose-triggered false alarms, not code-triggered
   ones. That asymmetry is part of the corpus, and it is disclosed
@@ -691,16 +732,6 @@ Honest limits, stated plainly:
   benign set; the benign flagged-at-any-severity rate rose from
   22.3% to 24.8% because the new rules also add CAUTIONs on benign
   prose.
-- **v0.8.0's re-run moved no verdict on this corpus.** Every one
-  of the 9,656 skills got the same verdict as in the v0.6 run.
-  The release's new machinery aims at shapes this corpus barely
-  contains: MCP tool manifests appear in only 12 of 7,421
-  malicious folders, so the new MCP tool-description rules fired
-  0 times here; and the claims check (129 malicious and 16 benign
-  folders) and the JavaScript/TypeScript ERROR_INFO_LEAK
-  extension (38 more malicious folders) fired only on skills
-  already at the same or a higher verdict — corroboration, not
-  new detections. The zero-false-BLOCK record holds at 63 rules.
 
 ## Licence
 
