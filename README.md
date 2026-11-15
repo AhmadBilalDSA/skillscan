@@ -53,7 +53,18 @@ VERDICT: BLOCK
 
 ## Install / usage
 
-Pure Python 3 standard library. No `pip install`, no dependencies.
+Pure Python 3 standard library, no dependencies. Install it as a
+command with pip, straight from GitHub:
+
+```bash
+pip install git+https://github.com/RakTikoo/skillscan
+skillscan <path-to-skill-folder>
+```
+
+(Please use the GitHub route: the `skillscan` name on PyPI belongs to
+a different tool by another author.)
+
+Or clone the repo and run it in place:
 
 ```bash
 git clone https://github.com/RakTikoo/skillscan
@@ -122,6 +133,27 @@ cannot be a clean PASS (`SCAN_INCOMPLETE`).
 | 3         | —        | Usage / IO error: the scanner could not run (bad path, bad flags). Deliberately distinct from BLOCK. |
 
 The exit codes make SkillScan usable as a CI / install-time gate.
+
+### Use as a library
+
+The same scan is importable — `scan_folder` for one skill folder,
+`scan_set` for a folder of skills (the `--combine` scan):
+
+```python
+from pathlib import Path
+
+from skillscan import scan_folder
+
+result = scan_folder(Path("samples/bad/ssh-stealer"))
+print(result.verdict)    # "BLOCK"
+print(result.exit_code)  # 2
+for finding in result.findings:
+    print(finding.rule, finding.file, finding.line)
+```
+
+`scan_folder` returns a `ScanResult` (verdict, findings, scanned/skipped
+file counts, and a `to_dict()` for the JSON report shape). Scanned code
+is never executed, exactly as with the command-line scan.
 
 ### Change watch (pin / check-pin)
 
@@ -365,9 +397,26 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
 
 - **GitHub Action** — the composite action in [`action.yml`](action.yml)
   (`path`, `fail-on-block`, `format`, `python-version` inputs;
-  `verdict` / `exit-code` outputs) runs SkillScan in CI.
+  `verdict` / `exit-code` outputs) runs SkillScan in CI:
+
+  ```yaml
+  - uses: RakTikoo/skillscan@v0.8.0
+    with:
+      path: ./skills/my-skill        # folder to scan
+      fail-on-block: "true"          # default: BLOCK fails the job
+  ```
+
 - **SARIF** — `--format sarif` emits SARIF 2.1.0 for GitHub code
   scanning, IDEs, and other static-analysis tooling.
+- **pre-commit** — this repo ships a [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml),
+  so a project can gate commits on a scan of its root folder:
+
+  ```yaml
+  - repo: https://github.com/RakTikoo/skillscan
+    rev: main   # the hook ships on main; pin a release tag once one carries it
+    hooks:
+      - id: skillscan
+  ```
 - **Pre-install hook** — [`hooks/pre-install-scan.sh`](hooks/pre-install-scan.sh)
   scans a folder before install and exits with the scanner's code, so
   installer wrappers can gate on it.
