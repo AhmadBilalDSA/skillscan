@@ -355,8 +355,8 @@ above is measured. That completes the v0.7 picture, per
 model. The deterministic benchmark figures below are
 offline-mode numbers and do not change.
 
-**What remains open** (updated on every release; last updated
-for v0.8.0, 2026-11-14):
+**What remains open** (updated on every push; last updated
+2026-11-15):
 
 - **Qwen's benign set is still being priced.** The run is
   resumable and continues daily across free-tier windows until
@@ -380,11 +380,43 @@ for v0.8.0, 2026-11-14):
   but leave the verdict, each with a reason and an expiry).
   Each item landed only after the full test suites and an
   adversarial review pass.
-- **The LLM-lane improvement programme is in progress.** Two
-  queued experiments — a purpose-consistency second pass and
-  HTML-comment surfacing — are being signal-tested on
-  development sets. Neither ships without held-out validation
-  and a clean benign gate.
+- **The LLM-lane signal tests are concluded; neither
+  technique shipped.** HTML-comment surfacing showed no signal
+  and is closed. A purpose-consistency second pass showed a
+  strong signal under a current model, but under a simpler
+  model it also flagged an honest lookalike case, failing the
+  benign gate set for it in advance — so it is parked, not
+  shipped. The shipped `--llm` mode is unchanged; a future
+  attempt needs a way to keep simpler models off the honest
+  lookalike cases.
+- **The promotion programme is concluded: one of eight
+  measured combinations shipped.** Eight CAUTION combinations
+  were measured as candidate promotions to BLOCK. Only
+  `INJECTION_EXECUTION` (temp-path kind) had no legitimate
+  twin across three adversarial review rounds; the other
+  seven are parked with their reasons recorded under Known
+  limits below. The remaining road, in order: fix three
+  over-broad rules the new benign-code set exposed (below);
+  price the broad capability pairs (network + subprocess and
+  friends) against that set's held-out half; and cross-file
+  dataflow for code-bearing skills that currently pass.
+- **A code-bearing benign set now exists, and it found real
+  false BLOCKs.** The corpus below ships benign skills as
+  prose only, so a frozen internal set of 344 hand-written
+  benign skills with real code was built to test the other
+  side. The current scanner BLOCKs 52 of the 344 — every one
+  fully disclosed in its own SKILL.md. Three groups are
+  defects in the rules (an SSH permission fixer blocked for
+  "reading" keys it only chmods; plain curl downloads blocked
+  as "sending data"; a skill's own temp-folder cleanup
+  blocked as destructive deletion) and their fixes are
+  scoped and priced. The rest are stated stances: any
+  persistence install blocks, disclosed or not, and uploads
+  to the user's own cloud still match the exfiltration shape
+  — the claims check is the tool for the second. The
+  zero-false-BLOCK figure below remains exact for the corpus
+  it names; this set is the wider truth, stated here rather
+  than smoothed over.
 - **The deterministic coverage programme continues.** v0.7.1
   extended ERROR_INFO_LEAK to JavaScript/TypeScript; the
   remaining documented gaps live in
@@ -423,7 +455,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
 
 ## Rules
 
-63 deterministic rules. Any block-severity hit makes the verdict BLOCK;
+64 deterministic rules. Any block-severity hit makes the verdict BLOCK;
 otherwise any caution hit makes it CAUTION; otherwise PASS. Every rule
 also carries an OWASP mapping (LLM Top 10 / MCP Top 10 category codes),
 surfaced per finding in JSON output and in SARIF rule metadata — it is
@@ -494,6 +526,7 @@ triage metadata only and never affects the verdict.
 | CLAIM_EXFIL_CONTRADICTION | block | A no-network or no-credential claim in SKILL.md contradicted by the exfiltration shape itself (credential material plus a send channel): the description denies the exact behaviour the scan proved |
 | MCP_DESCRIPTION_INSTRUCTION | caution | An MCP tool description steers the agent beyond the tool's own function: cross-tool preference ("always use this tool instead of…"), instruction overrides, or a credential store named inside an instruction |
 | MCP_DESCRIPTION_POISONING | block | The tool-poisoning shape in an MCP tool description: it tells the agent to keep actions hidden from the user, or to read a credential store (SSH keys, `.env`, credential files) and pass its contents along |
+| INJECTION_EXECUTION | block | Promotion combination — the one promotion that ships: a temp-path injection point (`ENV_INJECTION` from the dedicated temp-path matchers — code or prose staging a file at a fixed temp path tied to execution, where the finding's line names no loader variable) **and** an execution or download-and-run surface in the same file — write to a world-writable staging path and run it. Loader-variable assignments do not count: they stay `ENV_INJECTION` at caution |
 
 Every rule ships with a plain-English reason in the report, so a
 non-specialist can understand *why* something was flagged.
@@ -533,6 +566,21 @@ challenges it, by design of static analysis:
   *should* be flagged for subprocess + deletion, a weather skill for
   network + an env API key. `expanduser()` on a user-supplied path is
   currently flagged as home access — a known over-broad caution.
+- **Measured combinations that were NOT promoted.** Several
+  CAUTION pairs were measured as possible promotions and
+  deliberately left at CAUTION, because each has a legitimate
+  twin the scanner cannot tell apart at line level: a
+  loader-variable assignment (home installs, helper-built and
+  config-driven values are mainstream), disclosure prose plus
+  store-grade secret access (vault managers and backup tools
+  move the user's own credentials to the user's own
+  destination as their job), and concealment plus execution
+  (user-data decoders, shipped sample blobs and PEM material
+  look like payload decoding; hidden protective instructions
+  are agent-addressed by design). Correctness over coverage:
+  a combination is promoted only when it is a completed chain
+  with no mainstream benign twin — currently that is only the
+  temp-path `INJECTION_EXECUTION` shape above.
 - **Secret detection is heuristic.** The live-format tier needs the
   complete token in one place; the generic tier's regex floor is an
   8-character value, but its entropy requirement (≥3.5 bits per
@@ -615,7 +663,7 @@ python3 run_v06fix2_tests.py   # v0.6 fix wave 2: demotion hardening (code-only 
 
 [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) maps 25 techniques
 from four published audits of real malicious skills / MCP servers
-against the 63 rules above. Summary (Covered / Partial / Gap per audit):
+against the 64 rules above. Summary (Covered / Partial / Gap per audit):
 
 | Audit | Covered | Partial | Gap |
 |-------|---------|---------|-----|
@@ -643,10 +691,11 @@ SkillScan's own measured rates on a public labelled corpus —
 2,235 benign), pinned at GitHub commit
 `893afd609be22a2dfac5a2b94bbebb4eeb99515e` and Hugging Face
 revision `d4b42ce5766a6e0359c987cf59c1007cb3795a90`. First run
-2026-11-11 with SkillScan v0.6.0; re-run 2026-11-14 with
-SkillScan **v0.8.0** (63 deterministic rules) — the figures
-below are the v0.8.0 run, made with the deterministic offline
-mode only (no `--llm`). Malicious skills were scanned as
+2026-11-11 with SkillScan v0.6.0; re-run 2026-11-15 with the
+current tree (64 deterministic rules, including the
+`INJECTION_EXECUTION` promotion) — the figures below are that
+run, made with the deterministic offline mode only
+(no `--llm`). Malicious skills were scanned as
 complete extracted folders; benign skills are shipped by the
 benchmark as frozen text, so each was scanned as a single
 `SKILL.md` folder. Nothing was executed — folders were read as
@@ -655,35 +704,53 @@ text only. Full methodology, counting rules and caveats:
 
 | Set | Skills | BLOCK | CAUTION | PASS |
 |-----|--------|-------|---------|------|
-| Malicious | 7,421 | **45.8%** (3,399) | 36.6% (2,718) | 17.6% (1,304) |
+| Malicious | 7,421 | **49.8%** (3,696) | 32.6% (2,421) | 17.6% (1,304) |
 | Benign | 2,235 | 0% false BLOCKs (0) | 24.9% (557) | 75.1% (1,678) |
 
-Detection at BLOCK+CAUTION (flagged at any severity): **82.4%**
-(6,117 of 7,421) of malicious skills; 24.9% of benign skills
+Detection at BLOCK+CAUTION (flagged at any severity): **86.4%**
+(6,414 of 7,421) of malicious skills; 24.9% of benign skills
 were flagged at any severity, all as CAUTION. Median scan time
-was 110 ms per malicious skill (p95 801 ms) and ~43 ms per
+was 100 ms per malicious skill (p95 578 ms) and ~41 ms per
 benign skill.
 
 Detection by attack family (multi-label membership; BLOCK /
-BLOCK+CAUTION). This table is identical, cell for cell, to the
-v0.6 run — see "Why the numbers did not move" below:
+BLOCK+CAUTION). The BLOCK column is the 2026-11-15 run;
+BLOCK+CAUTION is unchanged from the v0.8.0 run, because the
+promotion only moved skills that were already flagged:
 
 | Family | Skills | BLOCK | BLOCK+CAUTION |
 |--------|--------|-------|---------------|
-| Privilege / tool-authority abuse | 1,004 | 74.5% | 99.4% |
-| Execution / code delivery | 3,205 | 74.2% | 97.9% |
-| Credential access | 197 | 55.3% | 95.9% |
-| Persistence / control | 249 | 55.0% | 90.0% |
-| Instruction / goal manipulation | 1,560 | 63.9% | 86.2% |
+| Privilege / tool-authority abuse | 1,004 | 78.9% | 99.4% |
+| Execution / code delivery | 3,205 | 79.2% | 97.9% |
+| Credential access | 197 | 55.8% | 95.9% |
+| Persistence / control | 249 | 55.8% | 90.0% |
+| Instruction / goal manipulation | 1,560 | 69.7% | 86.2% |
 | Data exfiltration / disclosure | 266 | 35.0% | 83.8% |
-| Resource / availability abuse | 330 | 22.7% | 90.3% |
+| Resource / availability abuse | 330 | 41.8% | 90.3% |
 | Dependency / supply chain | 167 | 13.2% | 87.4% |
 | Defense evasion / obfuscation | 20 | 10.0% | 100% |
-| Integrity / output manipulation | 97 | 1.0% | 28.9% |
+| Integrity / output manipulation | 97 | 2.1% | 28.9% |
 | Discovery / reconnaissance | 5 | 0.0% | 20.0% |
-| (No category assigned) | 2,591 | 24.5% | 67.6% |
+| (No category assigned) | 2,591 | 27.1% | 67.6% |
 
-### Why the numbers did not move
+### What moved in this run (2026-11-15)
+
+One change moved the numbers: the `INJECTION_EXECUTION`
+promotion. 297 malicious skills moved from CAUTION to BLOCK —
+every one a completed staging chain (a file written to a
+fixed temp path and tied to execution in the same file), and
+every transition is attributed to that one rule. Nothing else
+changed: PASS counts are identical, the benign side is
+identical (0 false BLOCKs, 557 CAUTION), and no other skill's
+rule set changed. Seven other measured combinations were
+**not** promoted — each has a legitimate twin the scanner
+cannot tell apart (see Known limits) — so this is the whole
+gain the promotion programme could honestly bank: BLOCK
+45.8% → 49.8% at zero measured false-BLOCK cost on either
+benign corpus (this one, and the code-bearing set described
+in "What remains open").
+
+### Why the numbers did not move (v0.6 → v0.8.0)
 
 Per skill, **zero verdicts changed** between the v0.6 and
 v0.8.0 runs — none stronger, none weaker — even though the new
@@ -718,7 +785,7 @@ Honest limits, stated plainly:
 - **Most misses are prose-only skills.** 1,304 malicious
   skills still PASS; 886 of them are a single `SKILL.md` with
   no code at all. Among *pure* instruction-manipulation skills
-  the BLOCK rate is 8.8%, and pure output manipulation is ~1%
+  the BLOCK rate is 8.8%, and pure output manipulation is ~2%
   — deterministic rules see behaviour shapes, not meaning.
 - **The benign side is prose-only** (see above), so the false-BLOCK
   figure measures prose-triggered false alarms, not code-triggered
@@ -731,7 +798,8 @@ Honest limits, stated plainly:
   v0.4 passed entirely. Benign false BLOCKs remain **0** on the same
   benign set; the benign flagged-at-any-severity rate rose from
   22.3% to 24.8% because the new rules also add CAUTIONs on benign
-  prose.
+  prose. (That was the picture through v0.8.0; the first change
+  since to move BLOCK is the 2026-11-15 promotion above.)
 
 ## Licence
 
@@ -739,7 +807,10 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2026 RakTikoo.
 
 ## Status
 
-Current release: **v0.8.0** (2026-11-14). SkillScan began as a
+Current release: **v0.8.0** (2026-11-14). Main has since
+gained the `INJECTION_EXECUTION` promotion (64 rules — see
+the Unreleased section of the CHANGELOG); the next release
+will carry it. SkillScan began as a
 Week 1 spike; every version since has passed the full test
 suites and an independent adversarial review before it was
 pushed. The short history: v0.1–v0.2 built the deterministic

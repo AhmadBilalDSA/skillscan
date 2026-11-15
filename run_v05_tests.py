@@ -81,7 +81,7 @@ def main() -> int:
     check("version-is-0.8.0", skillscan.__version__ == "0.8.0",
           skillscan.__version__)
     from skillscan.rules import RULES
-    check("rule-count-63", len(RULES) == 63, f"{len(RULES)} rules")
+    check("rule-count-64", len(RULES) == 64, f"{len(RULES)} rules")
     new_ids = {"OUTPUT_MANIPULATION", "PROSE_INSTRUCTION_EN",
                "PROSE_FETCH_EXECUTE", "PROSE_PIPE_INSTRUCTION",
                "PROSE_READ_SEND", "PROSE_SAFETY_BYPASS",

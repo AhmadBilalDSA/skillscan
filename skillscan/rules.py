@@ -94,6 +94,7 @@ _OWASP_MAP: dict[str, str] = {
     "CLAIM_EXFIL_CONTRADICTION": "LLM01, LLM02",
     "MCP_DESCRIPTION_INSTRUCTION": "LLM01, MCP04",
     "MCP_DESCRIPTION_POISONING": "LLM01, MCP04",
+    "INJECTION_EXECUTION": "LLM06, MCP05",
 }
 
 
@@ -701,6 +702,24 @@ RULES: list[Rule] = [
         "scan proved.",
         r"(?!)never-matches-line-level",  # claims check, claims.py
     ),
+    # --- CAUTION -> BLOCK promotion combinations (scan-level, -------
+    # scanner.py): completed attack chains whose halves are each
+    # only a caution. Each fires only on a folder with no
+    # block-severity finding yet, so the finding is exactly the
+    # promotion.
+    _rule(
+        "INJECTION_EXECUTION", "block",
+        "The skill stages a file at a fixed temp path (a "
+        "fixed-name file under /tmp that is made executable or "
+        "run) AND has a way to run or download code in the same "
+        "file. Either half alone is a caution; together the "
+        "staged code actually gets executed — a completed "
+        "write-to-a-world-writable-staging-path-and-run-it "
+        "chain. (Loader-variable assignments on their own do "
+        "not count: they stay ENV_INJECTION, caution — see "
+        "compute_promotions for why the set form is parked.)",
+        r"(?!)never-matches-line-level",  # promotion pass, scanner.py
+    ),
 ]
 
 RULES_BY_ID = {rule.id: rule for rule in RULES}
@@ -722,5 +741,6 @@ FILE_LEVEL_RULE_IDS = {
     "LURE_WITH_BYPASS", "TAINTED_SEND", "SECRET_FLOW", "TYPOSQUAT_SUSPECT",
     "AGENT_CONFIG_WRITE", "AGENT_CREDENTIAL_READ",
     "CLAIM_CONTRADICTED", "CLAIM_EXFIL_CONTRADICTION",
+    "INJECTION_EXECUTION",
 }
 LINE_RULES = [r for r in RULES if r.id not in FILE_LEVEL_RULE_IDS]

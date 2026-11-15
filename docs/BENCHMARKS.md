@@ -3,10 +3,13 @@
 SkillScan's measured detection and false-positive rates on a public
 labelled corpus. These are SkillScan's own numbers, published as
 measured — including the families where the rates are poor. Last run:
-**2026-11-14**, scanner **SkillScan v0.8.0** (63 deterministic
-rules). First run 2026-11-11 on v0.6.0; the v0.8.0 re-run gave every
+**2026-11-15**, scanner: the current tree (64 deterministic
+rules — v0.8.0's 63 plus the `INJECTION_EXECUTION` promotion).
+First run 2026-11-11 on v0.6.0; the v0.8.0 re-run gave every
 skill the same verdict as the v0.6 run (see "What changed from
-v0.6" below).
+v0.6" below); the 2026-11-15 re-run moved 297 malicious skills
+from CAUTION to BLOCK and changed nothing else (see "What
+changed from v0.8.0" below).
 
 ## Corpus
 
@@ -42,10 +45,11 @@ subset of the malicious side.
 - SkillScan interacted with every sample by reading it as text only.
   Nothing was executed, installed, imported, or uploaded. The scanner
   produced zero errors across all 9,656 scans.
-- Median scan time in the v0.8.0 run was ~110 ms per malicious
-  skill and ~43 ms per benign skill (the same harness measured
-  ~102 ms / ~55 ms for v0.6.0 on the same machine — timings are
-  machine-dependent; the verdicts are the result).
+- Median scan time in the 2026-11-15 run was ~100 ms per
+  malicious skill (p95 578 ms) and ~41 ms per benign skill
+  (the v0.8.0 run measured ~110 ms / ~43 ms on the same
+  harness — timings are machine-dependent; the verdicts are
+  the result).
 
 ## Counting rules
 
@@ -66,7 +70,7 @@ subset of the malicious side.
 
 | Set | n | BLOCK | CAUTION | PASS | Detection (BLOCK) | Detection (BLOCK+CAUTION) |
 |---|---|---|---|---|---|---|
-| Malicious | 7,421 | 3,399 | 2,718 | 1,304 | **45.8%** | **82.4%** |
+| Malicious | 7,421 | 3,696 | 2,421 | 1,304 | **49.8%** | **86.4%** |
 | Benign | 2,235 | 0 | 557 | 1,678 | false BLOCK **0%** | flagged 24.9% |
 
 What changed from v0.6, stated exactly: **nothing — at the
@@ -106,22 +110,43 @@ AGENT_CREDENTIAL_READ still on none, because the corpus's
 credential theft aims at SSH/cloud/browser stores, not agent
 credential stores.)
 
+What changed from v0.8.0, stated exactly (2026-11-15 run):
+**297 malicious skills moved from CAUTION to BLOCK, and
+nothing else.** Every transition is attributed to the one new
+rule, the `INJECTION_EXECUTION` promotion (temp-path kind);
+PASS counts are identical on both sides; the benign side is
+identical (0 false BLOCKs, 557 CAUTION, and the promotion
+fires nowhere on it). The same run on a second, internal
+benign corpus — 344 hand-written benign skills with real
+code, frozen before this measurement — also showed zero
+promotions; that set's baseline (52 of 344 BLOCKed by
+pre-existing rules, three defect groups among them) is
+recorded in the README's "What remains open" block, and its
+fixes are the next work item. Seven other measured promotion
+candidates were not shipped: each has a legitimate twin the
+scanner cannot tell apart at line level, and they stay at
+CAUTION deliberately.
+
 ### Detection by attack family (membership basis)
+
+The BLOCK column is the 2026-11-15 run; BLOCK+CAUTION is
+unchanged from v0.8.0, because the promotion only moved
+skills that were already flagged.
 
 | Family | n | BLOCK | BLOCK+CAUTION |
 |---|---|---|---|
-| privilege_tool_authority_abuse | 1,004 | 74.5% | 99.4% |
-| execution_code_delivery | 3,205 | 74.2% | 97.9% |
-| credential_access | 197 | 55.3% | 95.9% |
-| persistence_control | 249 | 55.0% | 90.0% |
-| instruction_goal_memory_manipulation | 1,560 | 63.9% | 86.2% |
+| privilege_tool_authority_abuse | 1,004 | 78.9% | 99.4% |
+| execution_code_delivery | 3,205 | 79.2% | 97.9% |
+| credential_access | 197 | 55.8% | 95.9% |
+| persistence_control | 249 | 55.8% | 90.0% |
+| instruction_goal_memory_manipulation | 1,560 | 69.7% | 86.2% |
 | data_exfiltration_disclosure | 266 | 35.0% | 83.8% |
-| resource_availability_abuse | 330 | 22.7% | 90.3% |
+| resource_availability_abuse | 330 | 41.8% | 90.3% |
 | dependency_supply_chain | 167 | 13.2% | 87.4% |
 | defense_evasion_obfuscation | 20 | 10.0% | 100% |
-| integrity_output_manipulation | 97 | 1.0% | 28.9% |
+| integrity_output_manipulation | 97 | 2.1% | 28.9% |
 | discovery_reconnaissance | 5 | 0.0% | 20.0% |
-| (no category assigned) | 2,591 | 24.5% | 67.6% |
+| (no category assigned) | 2,591 | 27.1% | 67.6% |
 
 Two membership figures need their honest footnotes:
 
@@ -130,7 +155,8 @@ Two membership figures need their honest footnotes:
   Among **pure** instruction-manipulation skills (single category,
   prose payloads, n=365), BLOCK is **8.8%** and BLOCK+CAUTION 45.2%.
 - *Output manipulation* is near-blind in both views: pure
-  single-category BLOCK 1.2%, BLOCK+CAUTION 28.6%.
+  single-category BLOCK 2.4% (2026-11-15 run; 1.2% before the
+  promotion), BLOCK+CAUTION 28.6%.
 
 ### Benign side in detail
 
@@ -147,7 +173,8 @@ Two membership figures need their honest footnotes:
   caution severity). The only post-v0.6 rule to fire on the
   benign side is the claims check: `CLAIM_CONTRADICTED` on 16
   skills, every one already at CAUTION — no benign verdict
-  changed in the v0.8.0 run. The top driver overall remains
+  changed in the v0.8.0 run, and none in the 2026-11-15 run
+  either (the promotion fires nowhere on the benign side). The top driver overall remains
   `PROSE_DOWNLOAD_RUN` (290 skills, 13.0% of all benign): prose
   that joins an external download with a run step.
 

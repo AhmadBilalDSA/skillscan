@@ -74,6 +74,41 @@ CREDENTIAL_RULES = {
     "BROWSER_CREDENTIAL_STORE",
 }
 SEND_RULES = {"NETWORK_SEND_DATA"}
+
+# --- CAUTION -> BLOCK promotion combinations ---------------------------
+# Capability sets for the promotion pass at the end of scan_folder
+# (compute_promotions). Wave 5 (final restriction): only one
+# promotion ships — INJECTION_EXECUTION, temp-path kind only.
+# DISCLOSURE_COMPLETION and CONCEALMENT_EXECUTION are parked and
+# removed (see compute_promotions for the reasons), and the
+# loader-variable set form of INJECTION_EXECUTION is parked with
+# them: loader-variable *assignments* stay what they have been
+# since v0.2 — ENV_INJECTION, caution.
+_PROMO_EXECUTION = {
+    "SHELL_SUBPROCESS", "SHELL_OS_SYSTEM", "EVAL_EXEC",
+    "DECODE_AND_RUN", "SUBSTITUTION_EXEC", "CURL_PIPE_BASH",
+    # Dynamic import loads a module the static scan cannot resolve;
+    # loading is executing its top level, so it is an execution
+    # surface, not a mere reference.
+    "DYNAMIC_IMPORT",
+}
+_PROMO_EXEC_OR_DOWNLOAD = _PROMO_EXECUTION | {
+    "DOWNLOAD_AND_RUN", "PROSE_DOWNLOAD_RUN", "PROSE_FETCH_EXECUTE",
+    "PACKAGE_INSTALL_SCRIPT_EXEC",
+}
+
+# The one promotion rule that survived the wave-5 review, and
+# the component rules it is built on. exceptions.py consumes
+# PROMOTION_COMPONENTS: a promotion built on a finding that an
+# exception set aside must not stand (see apply_exceptions).
+# INSTALL_CHAIN was removed in wave 4 (parked — see
+# compute_promotions).
+PROMOTION_RULE_IDS = {
+    "INJECTION_EXECUTION",
+}
+PROMOTION_COMPONENTS = {
+    "INJECTION_EXECUTION": {"ENV_INJECTION"} | _PROMO_EXEC_OR_DOWNLOAD,
+}
 SECRET_NAME_RE = re.compile(r"(key|token|secret|password|passwd|credential|auth)", re.IGNORECASE)
 # Credential-STORE material: the store alternatives of the
 # BROWSER_CREDENTIAL_STORE rule's own pattern, minus the bare
@@ -7649,6 +7684,208 @@ def _agent_config_findings(rel: str, path: Path, text: str,
                                     comment_spans, string_spans)
 
 
+def _folder_line_reader(root):
+    """A cached (rel, line) -> str reader over a scanned folder,
+    for the promotion pass's line-level qualifications. Line 0 is
+    a private convention between this reader and
+    compute_promotions: it returns the file's whole text (the
+    HIDDEN_TEXT file-level tests need it). A missing or unreadable
+    file reads as "" — never a crash, and an unreadable line never
+    qualifies a finding."""
+    root = Path(root)
+    cache: dict[str, list[str]] = {}
+
+    def lines_for(rel: str) -> list[str]:
+        if rel not in cache:
+            try:
+                text = (root / rel).read_text(
+                    encoding="utf-8", errors="replace")
+                cache[rel] = text.splitlines()
+            except Exception:
+                cache[rel] = []
+        return cache[rel]
+
+    def line_text(rel: str, line: int) -> str:
+        lines = lines_for(rel)
+        if line == 0:
+            return "\n".join(lines)
+        if 0 < line <= len(lines):
+            return lines[line - 1]
+        return ""
+
+    return line_text
+
+
+_LOADER_VAR_RE = re.compile(
+    r"\b(LD_PRELOAD|DYLD_INSERT_LIBRARIES|PYTHONSTARTUP)\b")
+def _env_injection_qualifies(finding: Finding, line_text) -> bool:
+    """Wave-5 qualification of the ENV_INJECTION half of
+    INJECTION_EXECUTION — temp-path kind ONLY:
+    - temp-path kind: the finding's line carries NO loader-variable
+      name — these findings come from the dedicated fixed-/tmp-path
+      matchers (a file planted at a predictable path, then run:
+      the AST temp-path matcher and the shell/text temp-path
+      matcher shapes);
+    - set kind: PARKED and removed in wave 5. A line carrying a
+      loader-variable name never qualifies, whatever form the
+      assignment takes and whatever value it assigns. Loader-
+      variable assignments stay ENV_INJECTION, caution, as they
+      have been since v0.2 (see compute_promotions for why:
+      payload provenance of an assigned value is not decidable
+      at line level).
+    Bare mentions never qualify either (they carry a loader
+    name, so they fall on the set side of this test).
+
+    The judged texts are the finding's recorded hit line (its
+    evidence — the temp-path line the matcher hit) AND its
+    anchored line: for AST temp-path findings the anchored
+    line number points at the execution call while the
+    evidence carries the staging line, so both must name no
+    loader variable. A fixture whose /tmp hit sits on a
+    loader line (a string or assignment naming LD_PRELOAD)
+    is the set form wearing a temp path, and does not
+    qualify; a pure staging line (PATH = "/tmp/...") does."""
+    line = line_text(finding.file, finding.line)
+    hit = (finding.evidence or "").strip()
+    if not line and not hit:
+        return False
+    if line and _LOADER_VAR_RE.search(line):
+        return False
+    if hit and _LOADER_VAR_RE.search(hit):
+        return False
+    return True
+
+
+def compute_promotions(findings, line_text) -> list[Finding]:
+    """CAUTION -> BLOCK promotions: completed attack chains whose
+    halves are each only a caution. Pure: takes a finding list
+    plus a `line_text` callable ((rel, line) -> str; line 0 =
+    whole-file text) and returns the promotion Finding objects —
+    construction mirrors scan_folder's add() (severity / reason
+    from RULES_BY_ID, the anchor finding's file / line / evidence,
+    dedupe by (rule, file)). A promotion fires only when the
+    finding set has NO block-severity finding yet (the skill sits
+    at CAUTION): a skill already at BLOCK keeps byte-identical
+    output, and a PASS skill has no findings to combine. Every
+    candidate is a technique-level chain — never a single
+    capability, and never a broad capability pair:
+    NETWORK_ACCESS + SHELL_SUBPROCESS, the canonical shape of a
+    legitimate local tool, deliberately does NOT appear here.
+
+    Wave 5 (final restriction): ONE promotion ships.
+
+    - INJECTION_EXECUTION, temp-path kind only: a dedicated
+      matcher finding of code or prose staging a file at a
+      fixed temp path tied to execution (an ENV_INJECTION
+      finding whose line names no loader variable — the AST
+      temp-path matcher and the shell/text temp-path matcher
+      shapes), corroborated by an execution/download finding
+      in the SAME file. That is a completed chain — write to
+      a world-writable staging path and run it — not a
+      capability. This branch had a clean record across all
+      three review rounds (~50 targeted benign fixtures, zero
+      false promotions attributed to it).
+
+    Deliberately NOT promoted (evaluated and parked):
+    - INJECTION_EXECUTION set form (parked in wave 5): a
+      loader-variable assignment judged by the VALUE being
+      assigned. Payload provenance of an assigned value is
+      not decidable at line level; home installs, helper-built
+      paths and config-driven values are mainstream, and
+      first-hit anchoring lets an attacker mask a set behind
+      a benign mention. Loader-variable assignments stay
+      ENV_INJECTION, caution.
+    - DISCLOSURE_COMPLETION (parked in wave 5, removed):
+      every branch met its mainstream twin — bulk env
+      (names-only reporters, error-tracker SDK context), and
+      store-grade reads (vault managers and backup tools
+      moving the user's own credentials to the user's own
+      destination are a product category; destination
+      ownership is not mechanically decidable; the raw-line
+      store qualification was negation-blind). Its projected
+      yield does not justify a false BLOCK on a password
+      manager. (ENV_FILE_READ was block-tier at base in code,
+      so that member was never reachable anyway.)
+    - CONCEALMENT_EXECUTION (parked in wave 5, removed):
+      decode provenance could not be told from user-data
+      decoders (data URIs, JWTs), shipped sample blobs, or
+      PEM material; zero-width runs are CMS-export artefacts;
+      hidden *protective* instructions (agent guardrails) are
+      agent-addressed by design, so separating orders-to-harm
+      from orders-to-protect is a semantic judgement —
+      LLM-lane territory, not a line rule.
+    - INSTALL_CHAIN (parked in wave 4): three formulations each
+      produced a mainstream benign twin — registry installs
+      beside a doc download; bare-name runtime installs; and the
+      disclosed vendor bootstrapper that installs the tarball it
+      downloaded, mechanically identical to the malicious
+      chain. The separator is provenance (whose payload is
+      it?), which line-level mechanics cannot see;
+    - destructive + execution (v1): in code the shape is
+      single-file os.remove cleanup — ordinary file management,
+      carried by the project's own benign fixtures;
+    - false claim + capability (v1): measured — the contradicted
+      claims are about writes, the capability half unrelated; the
+      pair completes no chain;
+    - PERSISTENCE_REMOTE_CODE (parked in wave 2): both halves are
+      block-in-code, so the promotion's entire domain was prose
+      install instructions, where disclosed-purpose tools (a
+      backup daemon whose cron job is its job, an nvm-style
+      version manager) share the shape and no mechanical
+      separator exists;
+    - DISCLOSURE_NETWORK (parked in wave 2): the two halves are
+      unconnected — the code's network use need not carry the
+      disclosed data (a plain GET completes nothing) — and the
+      shape is identical to mainstream SaaS sync tools;
+    - DISCLOSURE_COMPLETION sub-shapes (b) code send + prose
+      read-and-send, (c) concealment + code send and (d) error
+      leak + send (deleted in wave 2): in a CAUTION folder their
+      "code send" half can only ever be a doc-capped send (every
+      code-surface send rule is block-tier, and a folder
+      containing one never reaches this pass), so what they
+      measured was prose restating prose — the crash-reporter
+      shape."""
+    findings = list(findings)
+    if any(f.severity == "block" for f in findings):
+        return []
+    by_rule: dict[str, list[Finding]] = {}
+    for f in findings:
+        by_rule.setdefault(f.rule, []).append(f)
+    out: list[Finding] = []
+    seen: set[tuple[str, str]] = set()
+
+    def fire(rule_id: str, anchor_f: Finding | None) -> None:
+        if anchor_f is None:
+            return
+        key = (rule_id, anchor_f.file)
+        if key in seen:
+            return
+        seen.add(key)
+        rule = RULES_BY_ID[rule_id]
+        out.append(Finding(
+            rule=rule_id, severity=rule.severity,
+            file=anchor_f.file, line=anchor_f.line,
+            reason=rule.reason,
+            evidence=(anchor_f.evidence or "").strip()[:160]))
+
+    # Injection + execution, temp-path kind only: a QUALIFIED
+    # temp-path injection point (see _env_injection_qualifies)
+    # corroborated by an execution or download-and-run surface
+    # in the SAME FILE as the qualifying injection finding
+    # (wave 4: the corpus shapes are same-file; folder-wide
+    # corroboration let an unrelated helper in another file
+    # complete the chain).
+    exec_files = {f.file for f in findings
+                  if f.rule in _PROMO_EXEC_OR_DOWNLOAD}
+    if exec_files:
+        for f in by_rule.get("ENV_INJECTION", []):
+            if f.file in exec_files \
+                    and _env_injection_qualifies(f, line_text):
+                fire("INJECTION_EXECUTION", f)
+                break
+    return out
+
+
 def scan_folder(root: Path) -> ScanResult:
     root = root.resolve()
     result = ScanResult(target=str(root))
@@ -8179,6 +8416,15 @@ def scan_folder(root: Path) -> ScanResult:
                 add("CLAIM_EXFIL_CONTRADICTION" if chk.exfil
                     else "CLAIM_CONTRADICTED",
                     chk.claim.file, chk.claim.line, chk.claim.quote)
+
+    # CAUTION -> BLOCK promotion combinations: completed attack
+    # chains whose halves are each only a caution (see
+    # compute_promotions). Runs after every other pass,
+    # including the claims check, and only on folders with no
+    # block-severity finding yet.
+    for promo in compute_promotions(
+            list(result.findings), _folder_line_reader(root)):
+        add(promo.rule, promo.file, promo.line, promo.evidence)
 
     # Coverage honesty: suspicious skips (or scanning nothing at all) must
     # stop the folder from reading as a clean PASS.

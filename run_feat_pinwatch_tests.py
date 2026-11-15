@@ -79,7 +79,7 @@ data = json.loads(pinfile.read_text(encoding="utf-8"))
 check("PW1b pin records format, verdict, rules version, file hashes",
       data.get("format") == "skillscan-pin/1"
       and data.get("verdict") == "PASS"
-      and data.get("tool", {}).get("rules") == 63
+      and data.get("tool", {}).get("rules") == 64
       and "SKILL.md" in data.get("files", {})
       and len(data["files"]["SKILL.md"]["sha256"]) == 64,
       list(data))

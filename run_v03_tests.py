@@ -503,11 +503,16 @@ def main() -> int:
                               "os.chmod(HELPER, 0o755)\n",
                }), must_not={"ENV_INJECTION"})
 
+        # Verdict raised CAUTION -> BLOCK by the promotion pass:
+        # ENV_INJECTION + an execution surface is INJECTION_EXECUTION
+        # (the completed loader shape). The fixture's own point —
+        # ENV_INJECTION fires on execution through the variable —
+        # is unchanged.
         expect("fp5-var-referenced-exec-fires", fixture("fx-fp5b", {
             "tool.py": "import subprocess\n"
                        "P = '/tmp/.notesync-helper'\n"
                        "subprocess.run([P], check=False)\n",
-        }), verdict="CAUTION", must={"ENV_INJECTION"})
+        }), verdict="BLOCK", must={"ENV_INJECTION", "INJECTION_EXECUTION"})
 
         expect("fp5-doc-warning-benign", fixture("fx-fp5c", {
             "README.md": "# Safety\nNever write a helper to a fixed "

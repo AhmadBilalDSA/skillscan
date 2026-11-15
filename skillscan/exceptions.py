@@ -70,6 +70,8 @@ from datetime import date
 from pathlib import Path
 
 from .rules import RULES_BY_ID
+from .scanner import (PROMOTION_COMPONENTS, PROMOTION_RULE_IDS,
+                      _folder_line_reader, compute_promotions)
 
 EXCEPTIONS_FORMAT = "skillscan-exceptions/1"
 _MAX_EXCEPTIONS_BYTES = 4_000_000
@@ -261,7 +263,61 @@ def apply_exceptions(result, entries: list[ExceptionEntry],
             excepted.append(ExceptedFinding(
                 finding=finding, reason=entry.reason,
                 expires=entry.expires.isoformat()))
+    # Promotion interaction (wave 2): an excepted finding "leaves
+    # the verdict computation" — so a promotion BUILT ON a finding
+    # that has left must not stand. If any excepted finding is a
+    # component of any promotion, strip the promotion findings
+    # from the kept set, recompute promotions from what remains,
+    # and pass the recomputed promotions through the active
+    # entries again (a directly-excepted promotion goes to
+    # `excepted` with that entry's reason — the recompute must
+    # not resurrect it). Each promotion that fired before but no
+    # longer does earns a visible note naming the excepted
+    # component finding(s) it was built on.
     notes: list[str] = []
+    fired_before = {f.rule for f in result.findings
+                    if f.rule in PROMOTION_RULE_IDS}
+    component_excepted = [
+        e.finding for e in excepted
+        if any(e.finding.rule in comps
+               for comps in PROMOTION_COMPONENTS.values())]
+    if component_excepted:
+        kept = [f for f in kept
+                if f.rule not in PROMOTION_RULE_IDS]
+        recomputed = compute_promotions(
+            kept, _folder_line_reader(result.target))
+        survivors = []
+        for promo in recomputed:
+            hit = None
+            for idx, entry in enumerate(active):
+                if entry.matches(promo.rule, promo.file):
+                    matched_any[idx] = matched_any.get(idx, 0) + 1
+                    if hit is None:
+                        hit = idx
+            if hit is None:
+                survivors.append(promo)
+            else:
+                won.add(hit)
+                entry = active[hit]
+                excepted.append(ExceptedFinding(
+                    finding=promo, reason=entry.reason,
+                    expires=entry.expires.isoformat()))
+        kept.extend(survivors)
+        kept.sort(key=lambda f: (f.file, f.line, f.rule))
+        still_firing = {f.rule for f in survivors}
+        for rid in sorted(fired_before - still_firing):
+            comps: list[str] = []
+            for f in component_excepted:
+                if f.rule in PROMOTION_COMPONENTS[rid]:
+                    name = f"{f.rule} on {f.file}"
+                    if name not in comps:
+                        comps.append(name)
+            if not comps:
+                continue  # set aside directly, not via a component
+            notes.append(
+                f"promotion {rid} set aside: a finding it is "
+                "built on was set aside by an exception "
+                f"({', '.join(comps)})")
     for entry in expired:
         covered = sum(
             1 for f in kept if entry.matches(f.rule, f.file))

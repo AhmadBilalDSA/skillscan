@@ -6,6 +6,58 @@ suites and an adversarial review before it was pushed.
 
 ## Unreleased
 
+- **CAUTION → BLOCK promotion combination (63 → 64 rules).**
+  One scan-level combination promotes a folder whose findings
+  are all cautions to BLOCK when the cautions complete an attack
+  chain: INJECTION_EXECUTION, temp-path kind only — a dedicated
+  matcher finding of code or prose staging a file at a fixed
+  temp path tied to execution, corroborated by an execution or
+  download surface in the same file. That is a completed chain
+  (write to a world-writable staging path and run it), not a
+  capability, and it was the one branch with a clean record
+  across three adversarial review rounds. A promotion fires
+  only on a folder with no block-severity finding yet, so PASS
+  and BLOCK folders produce byte-identical output. The broad
+  capability pairs (NETWORK_ACCESS + SHELL_SUBPROCESS and
+  friends — the canonical shapes of legitimate local tools)
+  are deliberately NOT promoted. Parked and removed in this
+  final restriction, each with its reason: the
+  INJECTION_EXECUTION set form (payload provenance of an
+  assigned loader value is not decidable at line level — home
+  installs, helper-built paths and config-driven values are
+  mainstream, and first-hit anchoring is attacker-controllable;
+  loader assignments stay ENV_INJECTION, caution),
+  DISCLOSURE_COMPLETION (every branch met its mainstream twin —
+  vault managers and backup tools moving the user's own
+  credentials to the user's own destination are a product
+  category, and destination ownership is not mechanically
+  decidable), and CONCEALMENT_EXECUTION (decode provenance
+  cannot be told from user-data decoders, shipped sample blobs
+  or PEM material, zero-width runs are CMS-export artefacts,
+  and separating hidden orders-to-harm from hidden
+  orders-to-protect is a semantic judgement for the LLM lane).
+  Five further pairs were evaluated against the corpus and the
+  project's benign fixtures and rejected: destructive +
+  execution (in code the shape is single-file os.remove
+  cleanup — ordinary file management), false claim +
+  capability (the contradicted claims are about writes; the
+  capability half is unrelated, so no chain completes),
+  PERSISTENCE_REMOTE_CODE (both halves are block-in-code, so
+  its whole domain was prose install instructions, where
+  disclosed-purpose tools share the shape), DISCLOSURE_NETWORK
+  (the halves are unconnected — a plain GET carries none of
+  the disclosed data — and the shape is identical to
+  mainstream SaaS sync tools), and INSTALL_CHAIN (three
+  formulations each produced a mainstream benign twin — most
+  sharply the disclosed vendor bootstrapper that installs the
+  tarball it downloaded; the separator is provenance, which
+  line-level mechanics cannot see). With DISCLOSURE_COMPLETION
+  gone, the claims check is back to exactly its v0.8.0
+  behaviour (upgrade only on base exfiltration findings), and
+  an exception that sets aside the INJECTION_EXECUTION
+  component finding (ENV_INJECTION) still sets the promotion
+  aside with it, as does excepting the promotion directly.
+  Fixtures: run_block60_tests.py.
 - **Installable with pip from GitHub.** A `pyproject.toml` makes
   `pip install git+https://github.com/RakTikoo/skillscan` work and
   provides the `skillscan` command. (The `skillscan` name on PyPI
