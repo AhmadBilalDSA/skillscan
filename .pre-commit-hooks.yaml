@@ -1,0 +1,8 @@
+- id: skillscan
+  name: SkillScan
+  description: Scan an AI-agent skill or MCP server folder before it is committed or installed.
+  entry: skillscan
+  language: python
+  args: ["."]
+  pass_filenames: false
+  always_run: true
