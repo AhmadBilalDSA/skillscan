@@ -4,6 +4,23 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
+## Unreleased
+
+- **Installable with pip from GitHub.** A `pyproject.toml` makes
+  `pip install git+https://github.com/RakTikoo/skillscan` work and
+  provides the `skillscan` command. (The `skillscan` name on PyPI
+  belongs to a different tool by another author; this one installs
+  from the repo.)
+- **Public library API.** `skillscan/__init__.py` now re-exports
+  `scan_folder`, `scan_set`, `ScanResult`, `SetResult` and `Finding`;
+  the README gains a "Use as a library" section with a runnable
+  example.
+- **pre-commit hook.** `.pre-commit-hooks.yaml` ships the scanner as
+  a pre-commit hook (id `skillscan`, scans the repo root).
+- **Docs.** The GitHub Action example in `docs/TOOLCHAIN.md` now pins
+  the current release (v0.8.0; was v0.5.0), and the README's Toolchain
+  section shows the copy-paste `uses:` block.
+
 ## Measurement follow-up — 2026-11-14
 
 v0.8.0 was re-measured on the pinned MaliciousSkillBench corpus
