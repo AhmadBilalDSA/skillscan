@@ -395,25 +395,28 @@ offline-mode numbers and do not change.
   `INJECTION_EXECUTION` (temp-path kind) had no legitimate
   twin across three adversarial review rounds; the other
   seven are parked with their reasons recorded under Known
-  limits below. The remaining road, in order: fix three
-  over-broad rules the new benign-code set exposed (below);
-  price the broad capability pairs (network + subprocess and
-  friends) against that set's held-out half; and cross-file
-  dataflow for code-bearing skills that currently pass.
+  limits below. The remaining road, in order: price the
+  broad capability pairs (network + subprocess and friends)
+  against the benign-code set's held-out half; and
+  cross-file dataflow for code-bearing skills that
+  currently pass.
 - **A code-bearing benign set now exists, and it found real
-  false BLOCKs.** The corpus below ships benign skills as
-  prose only, so a frozen internal set of 344 hand-written
-  benign skills with real code was built to test the other
-  side. The current scanner BLOCKs 52 of the 344 — every one
-  fully disclosed in its own SKILL.md. Three groups are
-  defects in the rules (an SSH permission fixer blocked for
-  "reading" keys it only chmods; plain curl downloads blocked
-  as "sending data"; a skill's own temp-folder cleanup
-  blocked as destructive deletion) and their fixes are
-  scoped and priced. The rest are stated stances: any
-  persistence install blocks, disclosed or not, and uploads
-  to the user's own cloud still match the exfiltration shape
-  — the claims check is the tool for the second. The
+  false BLOCKs — three defect groups are now fixed.** The
+  corpus below ships benign skills as prose only, so a
+  frozen internal set of 344 hand-written benign skills with
+  real code was built to test the other side. The scanner
+  initially BLOCKed 52 of the 344, every one fully disclosed
+  in its own SKILL.md. Three groups were defects in the
+  rules — an SSH permission fixer blocked for "reading" keys
+  it only chmods, plain curl downloads blocked as "sending
+  data", a skill's own temp-folder cleanup blocked as
+  destructive deletion — and the 2026-11-15 fix wave
+  corrected all three (see "What the fix wave changed"
+  below): the set now BLOCKs 38, and every one of the 38 is
+  a stated stance, not a defect: any persistence install
+  blocks, disclosed or not (22), and uploads to the user's
+  own cloud still match the exfiltration shape (16) — the
+  claims check is the tool for the second. The
   zero-false-BLOCK figure below remains exact for the corpus
   it names; this set is the wider truth, stated here rather
   than smoothed over.
@@ -693,9 +696,9 @@ SkillScan's own measured rates on a public labelled corpus —
 revision `d4b42ce5766a6e0359c987cf59c1007cb3795a90`. First run
 2026-11-11 with SkillScan v0.6.0; re-run 2026-11-15 with the
 current tree (64 deterministic rules, including the
-`INJECTION_EXECUTION` promotion) — the figures below are that
-run, made with the deterministic offline mode only
-(no `--llm`). Malicious skills were scanned as
+`INJECTION_EXECUTION` promotion and the false-BLOCK fix wave
+described below) — the figures below are that run, made with
+the deterministic offline mode only (no `--llm`). Malicious skills were scanned as
 complete extracted folders; benign skills are shipped by the
 benchmark as frozen text, so each was scanned as a single
 `SKILL.md` folder. Nothing was executed — folders were read as
@@ -704,34 +707,35 @@ text only. Full methodology, counting rules and caveats:
 
 | Set | Skills | BLOCK | CAUTION | PASS |
 |-----|--------|-------|---------|------|
-| Malicious | 7,421 | **49.8%** (3,696) | 32.6% (2,421) | 17.6% (1,304) |
-| Benign | 2,235 | 0% false BLOCKs (0) | 24.9% (557) | 75.1% (1,678) |
+| Malicious | 7,421 | **49.7%** (3,689) | 32.7% (2,427) | 17.6% (1,305) |
+| Benign | 2,235 | 0% false BLOCKs (0) | 24.7% (551) | 75.3% (1,684) |
 
-Detection at BLOCK+CAUTION (flagged at any severity): **86.4%**
-(6,414 of 7,421) of malicious skills; 24.9% of benign skills
+Detection at BLOCK+CAUTION (flagged at any severity): **82.4%**
+(6,116 of 7,421) of malicious skills; 24.7% of benign skills
 were flagged at any severity, all as CAUTION. Median scan time
-was 100 ms per malicious skill (p95 578 ms) and ~41 ms per
+was ~106 ms per malicious skill (p95 ~600 ms) and ~44 ms per
 benign skill.
 
 Detection by attack family (multi-label membership; BLOCK /
 BLOCK+CAUTION). The BLOCK column is the 2026-11-15 run;
-BLOCK+CAUTION is unchanged from the v0.8.0 run, because the
-promotion only moved skills that were already flagged:
+BLOCK+CAUTION is unchanged from the v0.8.0 run except for
+one skill (see the fix wave below), because the promotion
+only moved skills that were already flagged:
 
 | Family | Skills | BLOCK | BLOCK+CAUTION |
 |--------|--------|-------|---------------|
-| Privilege / tool-authority abuse | 1,004 | 78.9% | 99.4% |
+| Privilege / tool-authority abuse | 1,004 | 78.2% | 99.4% |
 | Execution / code delivery | 3,205 | 79.2% | 97.9% |
-| Credential access | 197 | 55.8% | 95.9% |
-| Persistence / control | 249 | 55.8% | 90.0% |
-| Instruction / goal manipulation | 1,560 | 69.7% | 86.2% |
+| Credential access | 197 | 54.3% | 95.9% |
+| Persistence / control | 249 | 55.4% | 90.0% |
+| Instruction / goal manipulation | 1,560 | 70.4% | 86.2% |
 | Data exfiltration / disclosure | 266 | 35.0% | 83.8% |
-| Resource / availability abuse | 330 | 41.8% | 90.3% |
-| Dependency / supply chain | 167 | 13.2% | 87.4% |
+| Resource / availability abuse | 330 | 41.5% | 90.3% |
+| Dependency / supply chain | 167 | 14.4% | 87.4% |
 | Defense evasion / obfuscation | 20 | 10.0% | 100% |
 | Integrity / output manipulation | 97 | 2.1% | 28.9% |
 | Discovery / reconnaissance | 5 | 0.0% | 20.0% |
-| (No category assigned) | 2,591 | 27.1% | 67.6% |
+| (No category assigned) | 2,591 | 26.8% | 67.5% |
 
 ### What moved in this run (2026-11-15)
 
@@ -749,6 +753,30 @@ gain the promotion programme could honestly bank: BLOCK
 45.8% → 49.8% at zero measured false-BLOCK cost on either
 benign corpus (this one, and the code-bearing set described
 in "What remains open").
+
+### What the fix wave changed (2026-11-15)
+
+The same day, three over-broad rules were tightened to
+require the evidence their names claim — an SSH key path
+must actually be *read* (not merely mentioned), a curl
+command must carry a data flag among its *own* arguments
+(a header-dump `-D` is not a send, and a `-d` belonging to
+another command on the line is not curl's), and `rm -rf`
+is demoted to CAUTION only when the target is a folder the
+same script provably created itself. On the code-bearing
+benign set this freed 14 of the 52 blocked skills (the
+permission fixers, the plain downloads, the own-folder
+cleanups); every remaining BLOCK there is a stated stance.
+On this corpus the trade was: 34 explained BLOCK losses
+(mention-only SSH hits, download-only curls, own-artefact
+deletions, and exfiltration combinations whose only
+credential evidence was a mention) against 27 gains from
+properly tokenised multi-line curl sends — net BLOCK
+3,696 → 3,689 (49.7%), one mention-only skill also dropping
+from CAUTION to PASS, and benign CAUTIONs 557 → 551.
+Correctness over coverage, again: the headline rate bought
+with other people's false alarms is not a rate worth
+printing.
 
 ### Why the numbers did not move (v0.6 → v0.8.0)
 
@@ -808,9 +836,9 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2026 RakTikoo.
 ## Status
 
 Current release: **v0.8.0** (2026-11-14). Main has since
-gained the `INJECTION_EXECUTION` promotion (64 rules — see
-the Unreleased section of the CHANGELOG); the next release
-will carry it. SkillScan began as a
+gained the `INJECTION_EXECUTION` promotion (64 rules) and
+the false-BLOCK fix wave — see the Unreleased section of
+the CHANGELOG; the next release will carry both. SkillScan began as a
 Week 1 spike; every version since has passed the full test
 suites and an independent adversarial review before it was
 pushed. The short history: v0.1–v0.2 built the deterministic

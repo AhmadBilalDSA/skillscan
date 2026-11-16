@@ -6,6 +6,25 @@ suites and an adversarial review before it was pushed.
 
 ## Unreleased
 
+- **False-BLOCK fix wave (no rule-count change).** Three
+  rules now require the evidence their names claim:
+  `SSH_CREDENTIAL_READ` fires only when key material is
+  actually read (directly, or through a one-hop binding into
+  a reader) — a path mention, chmod or listing no longer
+  counts; `NETWORK_SEND_DATA` judges the tokenised statement,
+  so a data flag must be among curl/wget's own arguments and
+  `-D` (dump headers) no longer matches `-d` — which also
+  caught genuine multi-line curl sends the old per-line
+  pattern missed; `RM_RF` is demoted to CAUTION when the
+  target is provably the skill's own created folder
+  (literal-path deletions still BLOCK). Measured on the
+  pinned corpus: malicious BLOCK 49.8% → 49.7% (34 explained
+  losses, 27 gains), benign false BLOCKs still 0, and on a
+  frozen internal set of 344 code-bearing benign skills the
+  BLOCK count fell 52 → 38, the remainder being stated
+  stances (persistence installs; disclosed uploads matching
+  the exfiltration shape). Full accounting in the README
+  benchmark section.
 - **CAUTION → BLOCK promotion combination (63 → 64 rules).**
   One scan-level combination promotes a folder whose findings
   are all cautions to BLOCK when the cautions complete an attack

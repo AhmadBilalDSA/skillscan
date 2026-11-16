@@ -597,9 +597,19 @@ _BROWSER_STORE_FRAGMENTS = (
 
 
 def _check_credential_value(value: str, rel: str, line: int, add,
-                            agent_read: bool = False) -> None:
-    if ".ssh" in value or "id_rsa" in value or "id_ed25519" in value \
-            or "id_ecdsa" in value or "id_dsa" in value:
+                            agent_read: bool = False,
+                            ssh_read: bool = False) -> None:
+    # SSH_CREDENTIAL_READ (fix wave) fires only in a genuine READ
+    # context (ssh_read), exactly the discipline AGENT_CREDENTIAL_READ
+    # got in the v0.6 fix wave: a folded value that merely CONSTRUCTS
+    # or references a key path — an assignment, a Path(...) join, an
+    # exists()/chmod target — is not a read. Reader contexts are
+    # decided by the call sites: open/io.open arguments, a copy
+    # call's source argument, an upload/send argument, and subprocess
+    # command strings that the shell matcher judges to read the path
+    # (see _ssh_shell_hit). `.pub` paths stay in scope: the rule has
+    # always keyed on the id_* / .ssh fragments.
+    if ssh_read and _is_ssh_key_text(value):
         add("SSH_CREDENTIAL_READ", rel, line)
     if ".aws" in value or ".azure" in value or ".gcloud" in value:
         add("CLOUD_CREDENTIAL_READ", rel, line)
@@ -618,6 +628,1018 @@ def _check_credential_value(value: str, rel: str, line: int, add,
     # carries the same discipline.
     if agent_read and _is_agent_credential_value(value):
         add("AGENT_CREDENTIAL_READ", rel, line)
+
+
+# --- fix wave: statement-level shell judging ---------------------------
+# Three rules used to judge raw lines: SSH_CREDENTIAL_READ fired on
+# any mention of a key path, NETWORK_SEND_DATA's curl pattern matched
+# any later `-d` token on the line (and, via IGNORECASE, curl's
+# receive-side `-D`), and RM_RF ignored its target entirely. The
+# helpers below judge the STATEMENT instead: shell text is split
+# into command segments (quote- and substitution-aware), each
+# segment's command and its own top-level option tokens are
+# identified, and only then is a verdict formed.
+
+_SSH_KEY_RE = re.compile(
+    r"(\.ssh\b|id_rsa|id_ed25519|id_ecdsa|id_dsa)", re.IGNORECASE)
+
+_SSH_ID_RE = re.compile(
+    r"id_rsa|id_ed25519|id_ecdsa|id_dsa", re.IGNORECASE)
+_SSH_KEY_BASENAMES = {"authorized_keys"}
+
+
+def _is_ssh_key_text(text: str) -> bool:
+    """True when `text` names SSH KEY material: an id_* key path
+    anywhere, or a path into a .ssh directory that denotes the
+    directory itself, a glob of its contents, a key-shaped
+    entry (id_*, *.pem / *.key / *.ppk, authorized_keys), or a
+    credential-STORE file — a basename that names credentials
+    (credentials*, *credential*; fix wave 6, parent ruling:
+    `~/.ssh/credentials.json` is SSH credential material, the
+    same way an agent's .credentials.json store is). A merely
+    .ssh-RESIDENT non-key, non-credential file (access.log,
+    config, known_hosts) is not key material — reading it is
+    not a key read (fix wave 5: ASB04_003718's
+    `cat /home/user/.ssh/access.log` fired on the bare .ssh
+    fragment)."""
+    if _SSH_ID_RE.search(text):
+        return True
+    low = text.lower()
+    idx = 0
+    while True:
+        i = low.find(".ssh", idx)
+        if i == -1:
+            return False
+        after = low[i + 4:]
+        if after[:1].isalnum() or after[:1] == "_":
+            idx = i + 4  # .ssh2 / .sshx is a different name
+            continue
+        if not after.startswith("/"):
+            return True  # the .ssh directory itself
+        comp = re.split(r"[/\s'\"`;,)\]}]", after[1:], maxsplit=1)[0]
+        if comp == "" or "*" in comp or "?" in comp:
+            return True  # the directory itself, or a glob of it
+        if comp.startswith("id_") or comp in _SSH_KEY_BASENAMES \
+                or comp.endswith((".pem", ".key", ".ppk")):
+            return True
+        if "credential" in comp:
+            return True  # a credential-store file under .ssh
+        idx = i + 4
+
+
+def _split_shell_segments(text: str) -> list[str]:
+    """Split shell-ish text into command-segment strings on
+    top-level `;`, `&`, `|`, newlines and subshell parentheses.
+    Quoted spans stay intact. `$(...)` and backtick substitutions
+    are split out as segments of their own (recursively), because a
+    command inside a substitution IS in command position."""
+    segs: list[str] = []
+    buf: list[str] = []
+    i = 0
+    quote: str | None = None
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(text):
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < len(text):
+            buf.append(ch)
+            buf.append(text[i + 1])
+            i += 2
+            continue
+        if ch == "$" and text.startswith("$(", i):
+            depth = 0
+            j = i
+            q2: str | None = None
+            while j < len(text):
+                c2 = text[j]
+                if q2:
+                    if c2 == q2:
+                        q2 = None
+                elif c2 in ("'", '"'):
+                    q2 = c2
+                elif c2 == "(":
+                    depth += 1
+                elif c2 == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            segs.append("".join(buf))
+            buf = []
+            segs.extend(_split_shell_segments(text[i + 2:j]))
+            i = j + 1
+            continue
+        if ch == "`":
+            j = text.find("`", i + 1)
+            if j == -1:
+                j = len(text)
+            segs.append("".join(buf))
+            buf = []
+            segs.extend(_split_shell_segments(text[i + 1:j]))
+            i = j + 1
+            continue
+        if ch in ";&|\n":
+            segs.append("".join(buf))
+            buf = []
+            if ch in "&|" and i + 1 < len(text) and text[i + 1] == ch:
+                i += 1
+            i += 1
+            continue
+        if ch in "()":
+            segs.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    segs.append("".join(buf))
+    return segs
+
+
+def _segment_tokens(seg: str) -> list[tuple[str, str]]:
+    """Tokens of one segment as (text, unquoted_prefix): quotes are
+    stripped from the text, and the prefix is the token's leading
+    UNQUOTED run. Content that arrived inside quotes or a
+    substitution is a value, never a flag — the prefix is what flag
+    matching may judge."""
+    toks: list[tuple[str, str]] = []
+    cur: list[str] = []
+    prefix: list[str] = []
+    quoted_seen = False
+    active = False
+    quote: str | None = None
+    i = 0
+
+    def flush() -> None:
+        nonlocal cur, prefix, quoted_seen, active
+        if active:
+            toks.append(("".join(cur), "".join(prefix)))
+        cur = []
+        prefix = []
+        quoted_seen = False
+        active = False
+
+    while i < len(seg):
+        ch = seg[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(seg):
+                cur.append(seg[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+                i += 1
+                continue
+            cur.append(ch)
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            active = True
+            quoted_seen = True
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < len(seg):
+            cur.append(seg[i + 1])
+            if not quoted_seen:
+                prefix.append(seg[i + 1])
+            active = True
+            i += 2
+            continue
+        if ch.isspace():
+            flush()
+            i += 1
+            continue
+        active = True
+        cur.append(ch)
+        if not quoted_seen:
+            prefix.append(ch)
+        i += 1
+    flush()
+    return toks
+
+
+_CMD_SKIP_WORDS = {
+    "sudo", "env", "command", "builtin", "time", "then", "do",
+    "else", "elif", "if", "while", "until", "!", "exec", "nice",
+}
+_ASSIGN_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _segment_command(toks: list[tuple[str, str]]):
+    """(command, rest_tokens) for a segment: leading assignments,
+    wrapper words (sudo/env/...), key tokens ending in ':' (a YAML /
+    JSON `command:` label) and an `xargs` prefix are skipped, so the
+    command is the word actually in command position. (None, []) for
+    a pure-assignment segment."""
+    i = 0
+    while i < len(toks):
+        t = toks[i][0]
+        if _ASSIGN_TOKEN_RE.match(t) or t in _CMD_SKIP_WORDS \
+                or t.endswith(":"):
+            i += 1
+            if t == "xargs":
+                while i < len(toks) and len(toks[i][0]) > 1 \
+                        and toks[i][0].startswith("-"):
+                    flag = toks[i][0]
+                    i += 1
+                    if flag in ("-I", "-L", "-n", "-P", "-s") \
+                            and i < len(toks):
+                        i += 1
+            continue
+        break
+    if i >= len(toks):
+        return None, []
+    cmd = toks[i][0].replace("\\", "/").rsplit("/", 1)[-1]
+    return cmd, toks[i + 1:]
+
+
+# NETWORK_SEND_DATA, shell surface: the data-flag family, matched
+# case-SENSITIVELY (curl's `-D`/`--dump-header` are receive-side and
+# never count). Short flags may be combined (-fsSd) or carry an
+# attached value (-d@file); long flags may use --flag=value and may
+# appear after the URL.
+_CURL_DATA_LONG = {
+    "--data", "--data-raw", "--data-binary", "--data-ascii",
+    "--data-urlencode", "--form", "--upload-file",
+}
+_WGET_DATA_LONG = {
+    "--post-data", "--post-file", "--body-data", "--body-file",
+}
+_CURL_DATA_SHORTS = "dFT"
+
+# NETWORK_SEND_DATA, documentation surface (fix wave 2): docs do
+# NOT use the tokeniser above. The statement tokeniser judges the
+# joined logical statement, which on documentation changed the
+# base behaviour beyond the fix's scope: a multi-line curl example
+# in prose (data flag on a backslash-continuation line) never fired
+# under the base per-physical-line regex, but the joined statement
+# fired — and the caution-capped hit still sets the send half of
+# EXFIL_COMBINATION. Documentation keeps the base line surface
+# EXACTLY: this is the curl/wget fragment of the pre-fix-wave line
+# pattern, compiled IGNORECASE like every base line rule, applied
+# per physical line by the line pass in scan_folder (which also
+# supplies the base negation and metadata-endpoint skips and the
+# doc severity cap). Executable surfaces (shell / code files and
+# AST subprocess strings) keep the tokeniser.
+_NSD_DOC_LINE_RE = re.compile(
+    r"curl[^\n]*\s(-d\b|--data\b|--data-binary\b|--post-data\b)|"
+    r"wget[^\n]*--post-data\b", re.IGNORECASE)
+
+
+# NETWORK_SEND_DATA, code-file line surface (fix wave 2, extended):
+# every NON-shell, NON-doc text surface where the NSD line regex
+# ran at baseline (.py, .js, .ts, .json, ...) gets the baseline
+# line-regex behaviour back, with ONLY two defect-scoped repairs:
+#   (a) case repair — the data-flag alternatives match
+#       CASE-SENSITIVELY, so curl's receive-side `-D` /
+#       `--dump-header` no longer matches `-d` / `--data`. The
+#       leading curl/wget anchor stays case-insensitive, as at
+#       baseline (all base line rules compile IGNORECASE).
+#   (b) substitution repair — a flag whose position falls inside
+#       a `$(...)` span on the line does not count (the mktemp
+#       trap: `curl -o "$(mktemp -d)/x"` sends nothing). Flags
+#       inside ordinary quotes DO still count: a quoted curl
+#       command string is a command being built (the f-string
+#       `--data` shape), and flags after other tokens on the line
+#       count, exactly as at baseline — there is NO command-
+#       position or tokeniser requirement on this surface.
+# The broader tokeniser flag family (-F/-T/--data-raw/...),
+# joined-statement judging and command position apply ONLY to
+# shell files (via _fixwave_findings) and to AST subprocess
+# strings; applying them here is what produced the wave-1 gains
+# on code surfaces.
+_NSD_CODE_FLAG_RE = re.compile(
+    r"\s(-d\b|--data\b|--data-binary\b|--post-data\b)")
+_NSD_CURL_ANCHOR_RE = re.compile(r"curl", re.IGNORECASE)
+_NSD_WGET_ANCHOR_RE = re.compile(r"wget", re.IGNORECASE)
+
+
+def _subst_spans(line: str) -> list[tuple[int, int]]:
+    """(start, end) index pairs of `$(...)` spans on one line
+    (end is the closing paren, or end-of-line when unterminated).
+    Quote- and escape-aware inside the span, so a paren inside a
+    quoted string in the substitution does not close it early."""
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while i + 1 < len(line):
+        if line[i] == "$" and line[i + 1] == "(" \
+                and (i == 0 or line[i - 1] != "\\"):
+            depth = 1
+            j = i + 2
+            quote: str | None = None
+            while j < len(line) and depth > 0:
+                ch = line[j]
+                if quote:
+                    if ch == "\\" and quote == '"' and j + 1 < len(line):
+                        j += 2
+                        continue
+                    if ch == quote:
+                        quote = None
+                    j += 1
+                    continue
+                if ch in ("'", '"'):
+                    quote = ch
+                elif ch == "\\" and j + 1 < len(line):
+                    j += 2
+                    continue
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                j += 1
+            spans.append((i, j - 1 if depth == 0 else len(line)))
+            i = max(j, i + 2)
+            continue
+        i += 1
+    return spans
+
+
+def _nsd_code_line_hit(line: str) -> bool:
+    """Baseline NSD line behaviour for code surfaces, with the
+    case and substitution repairs above: True when a case-sensitive
+    data flag appears on the line after a curl anchor (any of the
+    baseline curl flag family) or after a wget anchor
+    (--post-data only), and the flag is not inside a `$(...)`
+    span. Any one qualifying flag is enough, as with the baseline
+    regex's existence semantics."""
+    if "curl" not in line.lower() and "wget" not in line.lower():
+        return False
+    spans = _subst_spans(line) if "$(" in line else []
+    for m in _NSD_CODE_FLAG_RE.finditer(line):
+        flag, start = m.group(1), m.start(1)
+        if any(lo < start < hi for lo, hi in spans):
+            continue  # repair (b): mktemp's `-d`, not curl's
+        before = line[:start]
+        if _NSD_CURL_ANCHOR_RE.search(before):
+            return True
+        if flag == "--post-data" \
+                and _NSD_WGET_ANCHOR_RE.search(before):
+            return True
+    # The baseline wget branch had no whitespace requirement
+    # before --post-data (`wget[^\n]*--post-data\b`): judge its
+    # occurrences directly (case-sensitive, substitution repair
+    # still applies).
+    for m in re.finditer(r"--post-data\b", line):
+        start = m.start()
+        if any(lo < start < hi for lo, hi in spans):
+            continue
+        if _NSD_WGET_ANCHOR_RE.search(line[:start]):
+            return True
+    return False
+
+
+def _segment_nsd_hit(cmd: str, rest: list[tuple[str, str]]) -> bool:
+    if cmd == "curl":
+        longs, shorts = _CURL_DATA_LONG, _CURL_DATA_SHORTS
+    elif cmd == "wget":
+        longs, shorts = _WGET_DATA_LONG, ""
+    else:
+        return False
+    for _text, prefix in rest:
+        if prefix == "--":
+            break  # end of options: the rest are positional values
+        if prefix.startswith("--"):
+            if prefix.split("=", 1)[0] in longs:
+                return True
+            continue
+        if prefix.startswith("-") and len(prefix) >= 2:
+            for ch in prefix[1:]:
+                if ch in shorts:
+                    return True
+                if not ch.isalpha():
+                    break
+    return False
+
+
+def _nsd_shell_hit(text: str) -> bool:
+    """True when a curl/wget in command position carries one of its
+    own top-level data flags. `bash -c '...'` wrappers are unwrapped
+    one level (the -c string is itself a statement)."""
+    for seg in _split_shell_segments(text):
+        toks = _segment_tokens(seg)
+        cmd, rest = _segment_command(toks)
+        if cmd is None:
+            continue
+        if _segment_nsd_hit(cmd, rest):
+            return True
+        if cmd in ("bash", "sh", "zsh", "dash") and rest:
+            texts = [t for t, _p in rest]
+            if "-c" in texts:
+                inner = texts[texts.index("-c") + 1] \
+                    if texts.index("-c") + 1 < len(texts) else ""
+                if inner and _nsd_shell_hit(inner):
+                    return True
+    return False
+
+
+# NETWORK_SEND_DATA, shell-file surface (fix wave 4): shell
+# files are judged with the SAME tokeniser as AST subprocess
+# strings (_nsd_shell_hit, above) — curl/wget in command
+# position, a case-sensitive data flag from the full spec'd
+# family (_CURL_DATA_LONG / _CURL_DATA_SHORTS / _WGET_DATA_LONG)
+# among the command's own top-level tokens, quotes and $(...)
+# spans opaque — applied to the joined logical (continuation-
+# joined, variable-expanded) statement, per the governing spec
+# (FALSE_BLOCK_FIX_SCOPING.md section 2). Fix wave 2 had
+# narrowed this surface to the baseline flag family judged per
+# physical line; wave 4 restores the spec'd family and joined-
+# statement judging on the SHELL surface only. The doc and
+# code-line surfaces keep their wave-2 behaviour exactly
+# (_NSD_DOC_LINE_RE / _nsd_code_line_hit, above). The priced
+# defect repairs all stay: command position (an echoed usage
+# sample is not a command), case-sensitive flags (curl's -D is
+# receive-side), and substitution awareness (mktemp's -d is
+# mktemp's, not curl's).
+
+
+# SSH_CREDENTIAL_READ, shell surface: a key-material path counts
+# only when consumed by a read operation in the same statement.
+# Assignments, tests, chmod/chown/stat/ls/mkdir do not count, and
+# neither does key GENERATION (ssh-keygen without -y/-p, ssh-copy-id
+# of a public key).
+_SSH_READ_ANY = {
+    "cat", "head", "tail", "base64", "xxd", "hexdump", "strings",
+    "od", "tac", "less", "more", "bat",
+}
+_SSH_COPY_CMDS = {"cp", "scp", "rsync", "sftp"}
+# openssl input options (fix wave 5): an openssl invocation that
+# consumes a key-material path through any of these is a read of
+# that file, whatever the subcommand (x509 / rsa / pkcs12 / ...).
+_OPENSSL_INPUT_OPTS = ("-in", "-inkey", "-key", "-certin",
+                       "-signkey", "-keyfile")
+_SSH_ARCHIVE_CMDS = {"tar", "zip", "7z", "7za"}
+_SHELL_KEYWORDS_NOT_READERS = {"chmod", "chown", "stat", "ls",
+                               "mkdir", "test", "[", "ssh-copy-id"}
+
+
+def _var_ref_in(token: str, names) -> bool:
+    return any(re.search(r"\$\{?" + re.escape(n) + r"\b", token)
+               for n in names)
+
+
+def _ssh_shell_hit(text: str, key_vars: set | None = None) -> bool:
+    """True when `text` (one statement, or a whole folded command
+    string) reads SSH key material. `key_vars`, when given, is a
+    caller-owned set of shell variable names known to hold key
+    paths; it is updated from assignments and `for` bindings inside
+    `text` and consulted for reader operands, so a path assembled in
+    one statement and read in another still counts (one-hop).
+
+    Statement-level flow, in segment order:
+    - an enumeration rooted at / pattern-matching key material
+      (find/ls with a key token) arms `enum_key`: a reader later in
+      the SAME statement consumes its results;
+    - `cd` into a key directory arms `key_dir`: a reader with any
+      operand later in the statement operates in that directory
+      (the folded `cd ~/.ssh && ls && cat *` shape);
+    - find's own `-exec <reader>` consumes the results directly.
+    Enumeration alone arms nothing that fires by itself."""
+    kv: set = key_vars if key_vars is not None else set()
+    key_dir = False
+    enum_key = False
+    for seg in _split_shell_segments(text):
+        toks = _segment_tokens(seg)
+        if not toks:
+            continue
+        texts = [t for t, _p in toks]
+        # Pure assignments bind key paths to names (one-hop source).
+        if all(_ASSIGN_TOKEN_RE.match(t) for t in texts):
+            for t in texts:
+                name, _eq, val = t.partition("=")
+                if _is_ssh_key_text(val) or _var_ref_in(val, kv):
+                    kv.add(name)
+            continue
+        # `for VAR in <key paths / key enumeration>` binds VAR.
+        if texts[0] == "for" and len(texts) >= 3 and texts[2] == "in":
+            if any(_is_ssh_key_text(t) or _var_ref_in(t, kv)
+                   for t in texts[3:]):
+                kv.add(texts[1])
+            continue
+        cmd, rest = _segment_command(toks)
+        if cmd is None:
+            continue
+        rest_texts = [t for t, _p in rest]
+        seg_key = any(_is_ssh_key_text(t) for t in texts) \
+            or _var_ref_in(" ".join(texts), kv)
+        operands = [t for t in rest_texts
+                    if not (t.startswith("-") and len(t) > 1)]
+        if cmd == "export":
+            for t in rest_texts:
+                if _ASSIGN_TOKEN_RE.match(t):
+                    name, _eq, val = t.partition("=")
+                    if _is_ssh_key_text(val) or _var_ref_in(val, kv):
+                        kv.add(name)
+            continue
+        if cmd == "cd":
+            if seg_key:
+                key_dir = True
+            continue
+        if cmd == "find":
+            for idx, t in enumerate(texts):
+                if t == "-exec" and idx + 1 < len(texts):
+                    verb = texts[idx + 1].replace("\\", "/") \
+                        .rsplit("/", 1)[-1]
+                    # -exec verbs (fix wave 5): cp / cat / readers
+                    # and mv (copy+delete) consume the results;
+                    # chmod does NOT — it only re-modes them.
+                    if (seg_key or key_dir) and verb in (
+                            _SSH_READ_ANY | _SSH_COPY_CMDS
+                            | _SSH_ARCHIVE_CMDS
+                            | {"curl", "wget", "dd", "openssl", "mv"}):
+                        return True
+            if seg_key:
+                enum_key = True
+            continue
+        if cmd in ("ls", "glob"):
+            if seg_key:
+                enum_key = True
+            continue
+        if cmd == "read":
+            # `find <key material> | while read VAR` (fix wave 3):
+            # the read variable receives the enumeration results —
+            # bind it into the caller-shared key-var set, so a
+            # reader in a LATER statement (`cat "$VAR"` on the next
+            # line, after the loop head) is judged a key read,
+            # exactly as a reader in the same statement is via
+            # enum_key. A read with no key enumeration behind it
+            # binds nothing.
+            if enum_key or key_dir:
+                names = [t for t in rest_texts
+                         if not (t.startswith("-") and len(t) > 1)]
+                if names and re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*", names[-1]):
+                    kv.add(names[-1])
+            continue
+        if cmd in _SHELL_KEYWORDS_NOT_READERS:
+            continue
+        if cmd in _SSH_READ_ANY:
+            if operands and (seg_key or key_dir or enum_key):
+                return True
+            continue
+        if cmd == "dd":
+            for t in rest_texts:
+                if t.startswith("if=") and (
+                        _is_ssh_key_text(t) or _var_ref_in(t, kv)
+                        or key_dir or enum_key):
+                    return True
+            continue
+        if cmd in _SSH_COPY_CMDS:
+            sources = operands[:-1] if len(operands) >= 2 else operands
+            if any(_is_ssh_key_text(t) or _var_ref_in(t, kv)
+                   for t in sources):
+                return True
+            if sources and (key_dir or enum_key):
+                return True
+            continue
+        if cmd in ("curl", "wget"):
+            if _segment_nsd_hit(cmd, rest):
+                for t in rest_texts:
+                    if "@" in t:
+                        after = t.split("@", 1)[1]
+                        if _is_ssh_key_text(after) \
+                                or _var_ref_in(after, kv) \
+                                or key_dir or enum_key:
+                            return True
+                    if t in ("-T", "--upload-file") or \
+                            t.startswith("--upload-file="):
+                        if seg_key:
+                            return True
+            continue
+        if cmd == "openssl":
+            # -in (and the key/cert input spellings) is a read
+            # regardless of subcommand (fix wave 5), in
+            # separate-token or =-joined form.
+            if seg_key and any(
+                    t == opt or t.startswith(opt + "=")
+                    for t in rest_texts
+                    for opt in _OPENSSL_INPUT_OPTS):
+                return True
+            continue
+        if cmd == "ssh-keygen":
+            # -y (print the public key FROM a private key) and -p
+            # (re-encrypt an existing key) READ existing material;
+            # plain generation (-t/-b/-f/-N) creates it and is not
+            # a read.
+            flags = set()
+            for t in rest_texts:
+                if t.startswith("-") and not t.startswith("--") \
+                        and len(t) > 1:
+                    flags.update(t[1:])
+            if flags & {"y", "p"} and seg_key:
+                return True
+            continue
+        if cmd in _SSH_ARCHIVE_CMDS:
+            if seg_key or (operands and (key_dir or enum_key)):
+                return True
+            continue
+        if cmd in ("bash", "sh", "zsh", "dash") and rest_texts:
+            if "-c" in rest_texts:
+                idx = rest_texts.index("-c")
+                if idx + 1 < len(rest_texts) \
+                        and _ssh_shell_hit(rest_texts[idx + 1], kv):
+                    return True
+            continue
+    return False
+
+
+def _ssh_enum_shell_hit(text: str, key_vars: set | None = None) \
+        -> bool:
+    """True when a shell statement ENUMERATES key material with no
+    reader attached (fix wave 3): a find/ls/glob rooted at a
+    key-material path (``find ~/.ssh ...``), pattern-matching key
+    material (``find / -name "id_*"``, ``ls ~/.ssh/id_*``), or a
+    `for` loop over a key-material glob. Enumeration alone is
+    CREDENTIAL_ENUMERATION (caution), not a key read — it is the
+    no-downstream-reader counterpart of the enumeration-result
+    flow in _ssh_shell_hit."""
+    kv: set = key_vars if key_vars is not None else set()
+    key_dir = False
+    for seg in _split_shell_segments(text):
+        toks = _segment_tokens(seg)
+        if not toks:
+            continue
+        texts = [t for t, _p in toks]
+        # Deliberately NOT a `for` glob: iterating "$DIR"/* over a
+        # .ssh directory variable is the permission-fixer shape
+        # (chmod each entry), and on the variable-expanded surface
+        # it is textually indistinguishable from a stealer's glob.
+        # A for-glob WITH a reader still fires SSH_CREDENTIAL_READ
+        # itself via _ssh_shell_hit's for-binding.
+        cmd, _rest = _segment_command(toks)
+        if cmd is None:
+            continue
+        seg_key = any(_is_ssh_key_text(t) for t in texts) \
+            or _var_ref_in(" ".join(texts), kv)
+        if cmd == "cd":
+            if seg_key:
+                key_dir = True
+            continue
+        if cmd in ("find", "ls", "glob") and (seg_key or key_dir):
+            return True
+    return False
+
+
+# Other code files (JS/Ruby/Perl/PHP/...): an SSH path on a line
+# counts only inside a reader call on that line.
+_SSH_CODE_READER_RE = re.compile(
+    r"\b(?:readFile|readFileSync|createReadStream|read_text|"
+    r"read_bytes|copyFile|copyFileSync|readFileToString|open|cat)\s*\("
+    r"|\bGet-Content\b", re.IGNORECASE)
+
+
+# RM_RF provenance (fix wave): a recursive forced delete demotes to
+# CAUTION when its target is a variable (or loop variable) whose
+# same-file binding traces to the skill's OWN creation — an mktemp
+# assignment, a path the same file mkdir's or copies into, or a
+# variable bound by enumerating a directory the same file populates
+# (the rotation shape). Everything else — literal targets, wildcard
+# literals at fixed locations, /, ~, $HOME, .., and variables with
+# no own-creation provenance — stays BLOCK.
+_RM_PATTERN = RULES_BY_ID["RM_RF"].pattern
+_TRAP_SIGNALS = {
+    "EXIT", "RETURN", "ERR", "DEBUG", "INT", "TERM", "HUP", "QUIT",
+    "USR1", "USR2", "ALRM", "PIPE",
+}
+_MK_VAR_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^\n]*\bmk(?:temp|dtemp)\b")
+_SH_ASSIGN_LINE_RE = re.compile(
+    r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+
+_GIT_CLONE_VALUE_OPTS = {
+    "--depth", "--branch", "-b", "--origin", "-o", "--template",
+    "--config", "-c", "--jobs", "-j", "--filter", "--reference",
+    "--reference-if-able", "--separate-git-dir", "--server-option",
+    "--upload-pack", "-u", "--bundle-uri",
+}
+
+# Anchor variables denote pre-existing system locations, never a
+# location the file itself created, however they are used.
+_RM_ANCHOR_VARS = {"HOME", "PWD", "OLDPWD", "USER", "LOGNAME",
+                   "TMPDIR"}
+# Path texts that are pre-existing system locations, not artefacts
+# a mkdir/copy in the file can claim as its own creation.
+_RM_BROAD_PATHS = {"/", ".", "..", "~", "$HOME", "${HOME}",
+                   "~/.ssh", "$HOME/.ssh", "${HOME}/.ssh"}
+
+
+def _rm_norm_path(t: str) -> str:
+    """Normalise a created/removed path token for comparison:
+    trailing slashes and `/.` suffixes vanish (`cp` destinations
+    are routinely written `"$DEST/"` or `"$DEST/."`)."""
+    nt = t.strip()
+    while nt.endswith("/."):
+        nt = nt[:-2]
+    if len(nt) > 1:
+        nt = nt.rstrip("/")
+    return nt
+
+
+def _rm_provenance(text: str):
+    """Own-creation provenance for `text` (fix wave, extended by
+    fix wave 3): (own_at, paths_at), mapping a variable name / a
+    normalised literal path to the OFFSET in `text` where its
+    provenance is established.
+
+    Provenance sources, all same-file:
+    - an mktemp / mkdtemp assignment (the variable);
+    - a location the file creates or populates — mkdir operands,
+      `install -d` directory operands (install's -d is a
+      directory-creation verb, equal to mkdir), plain `install`
+      and cp/scp/rsync destinations — recorded BOTH as a literal
+      path (paths_at: on the expanded shell surface an rm operand
+      IS the literal path, not the variable that named it) and,
+      when the target is exactly a variable (``"$VAR"``,
+      ``"$VAR/"``), as that variable (own_at), unless the variable
+      is a system anchor (HOME, PWD, ...);
+    - an assignment of a path under a created location, a loop
+      variable over a created location, or a read variable
+      enumerating one.
+
+    ORDERING (fix wave 3, parent ruling on R-E9): provenance only
+    counts for an rm whose position in the file is AFTER the
+    position that establishes it — a binding that appears after
+    the rm (or after the trap registration carrying it) proves
+    nothing about what the rm removed when it ran. Derivations
+    chain only from sources established before them."""
+    own_at: dict[str, int] = {}
+    paths_at: dict[str, int] = {}
+    created_at: dict[str, int] = {}  # names denoting a created loc
+    lines = text.splitlines()
+    line_offsets: list[int] = []
+    _off = 0
+    for _l in lines:
+        line_offsets.append(_off)
+        _off += len(_l) + 1
+
+    def note(d: dict, key: str, pos: int) -> None:
+        if key and (key not in d or pos < d[key]):
+            d[key] = pos
+
+    for m in _MK_VAR_RE.finditer(text):
+        note(own_at, m.group(1), m.start())
+        note(created_at, m.group(1), m.start())
+    # Locations the file creates or populates: mkdir operands,
+    # install -d operands, and copy destinations (last operand),
+    # as literal token text.
+    created_exprs: dict[str, int] = {}
+    for start, _end, stmt in _logical_statements(lines,
+                                                 join_braces=False):
+        stmt_off = line_offsets[start - 1] if 0 < start <= len(
+            line_offsets) else 0
+        search_from = 0
+        for seg in _split_shell_segments(stmt):
+            seg_idx = stmt.find(seg, search_from) if seg else -1
+            seg_off = stmt_off + (seg_idx if seg_idx >= 0 else 0)
+            if seg_idx >= 0:
+                search_from = seg_idx + len(seg)
+            toks = _segment_tokens(seg)
+            cmd, rest = _segment_command(toks)
+            if cmd is None:
+                continue
+            rest_texts = [t for t, _p in rest]
+            targets: list[str] = []
+            if cmd == "mkdir":
+                targets = [t for t in rest_texts
+                           if not (t.startswith("-") and len(t) > 1)]
+            elif cmd == "install":
+                # install -d DIR... creates directories (mkdir);
+                # install SRC... DST copies into DST. Option values
+                # (-m 755, -o user) are not operands.
+                operands = []
+                j = 0
+                while j < len(rest_texts):
+                    t = rest_texts[j]
+                    if t in ("-m", "--mode", "-o", "--owner",
+                             "-g", "--group"):
+                        j += 2
+                        continue
+                    if t.startswith("-") and len(t) > 1:
+                        j += 1
+                        continue
+                    operands.append(t)
+                    j += 1
+                is_dir = any(
+                    t == "--directory"
+                    or re.fullmatch(r"-[A-Za-z]*d[A-Za-z]*", t)
+                    for t in rest_texts)
+                targets = operands if is_dir else operands[-1:]
+            elif cmd in _SSH_COPY_CMDS:
+                operands = [t for t in rest_texts
+                            if not (t.startswith("-") and len(t) > 1)]
+                targets = operands[-1:] if operands else []
+            elif cmd == "git" and rest_texts[:1] == ["clone"]:
+                # `git clone REPO DEST` creates DEST exactly like
+                # a copy destination (fix wave 5): the target is
+                # the operand after the repository (the last
+                # non-option operand), skipping clone options,
+                # their values, and redirections.
+                operands = []
+                j = 1
+                while j < len(rest_texts):
+                    t = rest_texts[j]
+                    if re.fullmatch(r"(?:\d+|&)?>>?", t):
+                        j += 2  # bare redirection: skip its target
+                        continue
+                    if re.match(r"(?:\d+|&)?>>?", t) and ">" in t:
+                        j += 1  # attached redirection (2>/dev/null)
+                        continue
+                    if t in _GIT_CLONE_VALUE_OPTS:
+                        j += 2
+                        continue
+                    if t.startswith("-") and len(t) > 1:
+                        j += 1
+                        continue
+                    operands.append(t)
+                    j += 1
+                targets = operands[-1:] if len(operands) >= 2 else []
+            for t in targets:
+                pos = seg_off + max(seg.find(t), 0)
+                note(created_exprs, t, pos)
+                nt = _rm_norm_path(t)
+                # A path that IS a substitution result (`$(...)`)
+                # is not a fixed path; a fixed path with an
+                # EMBEDDED substitution (a dated backup dir,
+                # `/tmp/openclaw_backup_$(date +%s)` — fix wave 5)
+                # is one: the identical text at the rm site names
+                # the artefact this command created.
+                if nt not in _RM_BROAD_PATHS and len(nt) >= 2 \
+                        and "*" not in nt and "?" not in nt \
+                        and not nt.startswith("$(") \
+                        and not nt.isdigit():
+                    note(paths_at, nt, pos)
+                m = re.fullmatch(
+                    r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(/\.?|/)?", t)
+                if m:
+                    note(created_at, m.group(1), pos)
+                    if m.group(1) not in _RM_ANCHOR_VARS:
+                        note(own_at, m.group(1), pos)
+    # Assignments of paths under a created location are themselves
+    # created locations (DEST="$ROOT/backup-..." where $ROOT was
+    # mkdir'd / copied into). Two passes for one level of chaining.
+    # A derivation counts only when its SOURCE was established
+    # before the assignment line.
+    for _ in range(2):
+        for idx, line in enumerate(lines):
+            m = _SH_ASSIGN_LINE_RE.match(line)
+            if not m:
+                continue
+            name, rhs = m.group(1), m.group(2)
+            if name in own_at:
+                continue
+            line_off = line_offsets[idx]
+            sourced = any(e and pos < line_off and e in rhs
+                          for e, pos in created_exprs.items()) \
+                or any(pos < line_off and _var_ref_in(rhs, {v})
+                       for v, pos in created_at.items())
+            if sourced:
+                note(own_at, name, line_off)
+                note(created_at, name, line_off)
+    # Loop / read variables enumerating a created location (the
+    # enumeration source must precede the loop statement).
+    for start, _end, stmt in _logical_statements(lines,
+                                                 join_braces=False):
+        stmt_off = line_offsets[start - 1] if 0 < start <= len(
+            line_offsets) else 0
+
+        def _sourced_before(fragment: str) -> bool:
+            return any(pos < stmt_off and _var_ref_in(fragment, {v})
+                       for v, pos in created_at.items()) \
+                or any(e and pos < stmt_off and e in fragment
+                       for e, pos in created_exprs.items())
+
+        m = re.search(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.*)",
+                      stmt)
+        if m and _sourced_before(m.group(2)):
+            note(own_at, m.group(1), stmt_off)
+        enum_here = False
+        for seg in _split_shell_segments(stmt):
+            toks = _segment_tokens(seg)
+            cmd, rest = _segment_command(toks)
+            seg_text = " ".join(t for t, _p in toks)
+            if cmd in ("ls", "find", "glob") \
+                    and _sourced_before(seg_text):
+                enum_here = True
+        if enum_here:
+            for rm_ in re.finditer(
+                    r"\bread\s+(?:-[A-Za-z]+\s+)*"
+                    r"([A-Za-z_][A-Za-z0-9_]*)", stmt):
+                note(own_at, rm_.group(1), stmt_off)
+    return own_at, paths_at
+
+
+def _rm_own_vars(text: str) -> set:
+    """Variable names in `text` provably bound to artefacts the
+    same file created (see _rm_provenance). Kept as the set-valued
+    view of the provenance pass."""
+    own_at, _paths_at = _rm_provenance(text)
+    return set(own_at)
+
+
+def _rm_line_qualifies(line: str, prov, shell: bool,
+                       base_offset: int = 0) -> bool:
+    """True when EVERY rm -rf invocation on the line targets only
+    provably own-created artefacts (or an mktemp substitution
+    itself). Any literal or unprovenanced target disqualifies.
+    `prov` is _rm_provenance's (own_at, paths_at); a target counts
+    only when its provenance offset precedes the rm invocation's
+    own offset (`base_offset` + the match position) — for a trap
+    form, the binding must precede the trap registration line.
+    A plain set of names is accepted for compatibility and treated
+    as provenance established before the whole file."""
+    if isinstance(prov, (set, frozenset)):
+        own_at, paths_at = {n: -1 for n in prov}, {}
+    else:
+        own_at, paths_at = prov
+    matches = list(_RM_PATTERN.finditer(line))
+    if not matches:
+        return False
+    for m in matches:
+        hit = base_offset + m.start()
+        rest = line[m.end():]
+        rest = re.split(r";|&&|\|\||\|", rest, maxsplit=1)[0]
+        # A trap-embedded rm (`trap 'rm -rf "$W"' EXIT`) ends at the
+        # trap string's closing quote: without this cut the
+        # tokeniser merges the signal word into the last operand
+        # token ("./.work EXIT"), and no provenance can match it —
+        # the reason mkdir-provenance traps never demoted while
+        # mktemp traps (a prefix check) did (fix wave 3).
+        rest = re.split(
+            r"[\"']\s+(?=(?:"
+            + "|".join(sorted(_TRAP_SIGNALS)) + r")\b)",
+            rest, maxsplit=1)[0]
+        if not shell:
+            # A command inside a code string ends at the string's
+            # closing quote followed by call punctuation.
+            rest = re.split(r"[\"']\s*[,\)\]]", rest, maxsplit=1)[0]
+        operands: list[str] = []
+        skip_redir_target = False
+        for t, _p in _segment_tokens(rest):
+            tt = t.strip().strip(",")
+            if not tt:
+                continue
+            if skip_redir_target:
+                skip_redir_target = False
+                continue  # a redirection's target is not an operand
+            # Redirections are not rm targets (fix wave 5): the
+            # trap form `rm -rf "$WORKDIR" 2>/dev/null` deletes
+            # only $WORKDIR — /dev/null is where the output goes.
+            # This, not the mktemp template, is what kept
+            # ASB04_001145 at BLOCK: the template binding WAS
+            # recognised, but `2>/dev/null` was judged as a second,
+            # unprovenanced operand. A bare operator (>, 2>, >>)
+            # consumes the next token as its target; an attached
+            # form (2>/dev/null, 2>&1) is self-contained.
+            _redir = re.match(r"(?:\d+|&)?>>?", tt) \
+                if tt[:1].isdigit() or tt[:1] in ">&" else None
+            if _redir:
+                if _redir.end() == len(tt):
+                    skip_redir_target = True
+                continue
+            if tt.startswith("-") and len(tt) > 1 and not tt.startswith("$"):
+                continue  # a further rm flag
+            if tt in _TRAP_SIGNALS:
+                continue  # trap 'rm -rf "$T"' EXIT: EXIT is trap's arg
+            if "=" in tt and not tt.startswith("$"):
+                break  # shell=True) and friends: the command ended
+            operands.append(tt)
+        if not operands:
+            return False
+        for op in operands:
+            if "*" in op or "?" in op or ".." in op:
+                return False
+            if op.startswith("$(") and "mktemp" in op:
+                continue  # rm -rf "$(mktemp -d)" result, post-expansion
+            nt = _rm_norm_path(op)
+            if any(pos < hit and (nt == p or nt.startswith(p + "/"))
+                   for p, pos in paths_at.items()):
+                continue  # the created path itself, or under it
+            vm = re.fullmatch(
+                r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(/.*)?", op)
+            if vm and vm.group(1) in own_at \
+                    and own_at[vm.group(1)] < hit:
+                continue
+            if not shell and op.strip("{}") in own_at \
+                    and own_at[op.strip("{}")] < hit \
+                    and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*",
+                                     op.strip("{}")):
+                continue  # a bare / f-string-interpolated own variable
+            return False
+    return True
 
 
 # --- v0.6: AI-agent credential stores & global agent configuration ------
@@ -1637,6 +2659,356 @@ def _taint_findings_inner(tree: ast.AST, sym: _Symbols, rel: str,
         process_scope(fnode.body, fnode, emit=True)
 
 
+def _expr_has_ssh_key(node: ast.AST, sym: _Symbols) -> bool:
+    """True when any string an expression might denote names SSH
+    key material — judged in ONE walk: string constants, env-bound
+    names and list elements, subscript/starred pieces, the folded
+    value of concatenation / f-string sub-expressions (a piece like
+    ".s" + "sh" folds to a fragment on its own), and multi-arg
+    constructor joins (Path(home, ".ssh", "id_rsa") assembled
+    through a resolved or getattr-obtained class)."""
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Constant):
+            if isinstance(sub.value, str) \
+                    and _is_ssh_key_text(sub.value):
+                return True
+        elif isinstance(sub, (ast.Name, ast.Starred)):
+            base = sub.id if isinstance(sub, ast.Name) else (
+                sub.value.id if isinstance(sub.value, ast.Name)
+                else None)
+            if base is not None:
+                v = sym.env_str.get(base)
+                if v and _is_ssh_key_text(v):
+                    return True
+                lst = sym.env_list.get(base)
+                if lst and any(_is_ssh_key_text(str(i)) for i in lst):
+                    return True
+        elif isinstance(sub, ast.Subscript) \
+                and isinstance(sub.value, ast.Name):
+            lst = sym.env_list.get(sub.value.id)
+            idx = sub.slice.value if isinstance(sub.slice,
+                                                ast.Constant) else None
+            if lst and isinstance(idx, int) and 0 <= idx < len(lst) \
+                    and _is_ssh_key_text(str(lst[idx])):
+                return True
+        if isinstance(sub, (ast.BinOp, ast.JoinedStr)):
+            folded = _fold_str(sub, sym)
+            if folded and _is_ssh_key_text(folded):
+                return True
+        elif isinstance(sub, ast.Call):
+            if len(sub.args) >= 2:
+                parts = [_fold_str(a, sym) for a in sub.args]
+                if all(p is not None for p in parts) \
+                        and _is_ssh_key_text("/".join(parts)):
+                    return True
+            elif sub.args:
+                folded = _fold_str(sub, sym)
+                if folded and _is_ssh_key_text(folded):
+                    return True
+    return False
+
+
+_SSH_FRAGMENT_TOKENS = (".ssh", "id_rsa", "id_ed25519", "id_ecdsa",
+                        "id_dsa")
+
+
+def _ssh_bindings_relevant(tree: ast.AST, sym: _Symbols) -> bool:
+    """Cheap gate for the one-hop bindings pass: it can only find
+    something when a key fragment exists in the file — as a folded
+    env value, or as a string constant that IS a fragment token or
+    a length>=2 piece of one (the ".s" + "sh" assembly shape). One
+    plain walk, no folding."""
+    if any(_is_ssh_key_text(v) for v in sym.env_str.values()):
+        return True
+    if any(_is_ssh_key_text(str(i))
+           for lst in sym.env_list.values() for i in lst):
+        return True
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) \
+                and isinstance(node.value, str):
+            c = node.value
+            if any(p in c or (len(c) >= 2 and c in p)
+                   for p in _SSH_FRAGMENT_TOKENS):
+                return True
+    return False
+
+
+def _ssh_key_bindings(tree: ast.AST, sym: _Symbols):
+    """One-hop key-material bindings for one Python file (fix wave):
+    (key_names, key_collections, dict_maps). A name bound to a
+    key-path literal — assignment, list/dict element, os.path.join
+    / Path join, f-string, concatenation, expanduser — or a loop
+    variable over a collection of such paths, counts as HOLDING key
+    material, so a reader consuming the name later in the file is a
+    key read. The AST taint layer does not backstop the
+    collection-mediated shape (its sends are shell/DNS), so the SSH
+    matcher carries this itself. Bindings are name-based and
+    file-wide, like the symbol table's own discipline.
+
+    Fix wave 3 extends the same one-hop discipline to the shapes an
+    adversarial review showed escaping it:
+    - DICT collections: `dict_maps` records, per dict-literal name,
+      which side (keys / values) holds key material and, for
+      foldable string keys, which entry does. Iteration over
+      `.values()` / `.items()` / `.keys()`, subscript access and
+      `.get()` are judged against that record — when the accessed
+      entry is foldable the judgement is exact, otherwise the
+      collection discipline applies (any access may reach the key
+      entry), exactly as for list elements.
+    - FUNCTION PARAMETER DEFAULTS are bindings: a default that
+      denotes a key path binds its parameter name, so a reader
+      consuming the parameter inside the function is a key read."""
+    key_names: set = set()
+    key_colls: set = set()
+    # binds: (target names, value expression) — assignments AND
+    # parameter defaults, judged identically.
+    binds: list = []
+    fors: list = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            if value is None:
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) \
+                else [node.target]
+            names = [n.id for t in targets for n in ast.walk(t)
+                     if isinstance(n, ast.Name)
+                     and isinstance(n.ctx, ast.Store)]
+            if names:
+                binds.append((names, value))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.Lambda)):
+            args = node.args
+            positional = list(getattr(args, "posonlyargs", [])) \
+                + list(args.args)
+            defaults = [None] * (len(positional) - len(args.defaults)) \
+                + list(args.defaults)
+            for arg, default in zip(positional, defaults):
+                if default is not None:
+                    binds.append(([arg.arg], default))
+            for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+                if default is not None:
+                    binds.append(([arg.arg], default))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            fors.append((node.target, node.iter))
+        elif isinstance(node, ast.comprehension):
+            fors.append((node.target, node.iter))
+
+    def target_names(t) -> list:
+        return [n.id for n in ast.walk(t)
+                if isinstance(n, ast.Name)
+                and isinstance(n.ctx, ast.Store)]
+
+    # Dict-literal records, built once from the binds: for each
+    # name bound to a dict literal (or a dict(...) call with
+    # keyword entries), which entries denote key material.
+    dict_maps: dict = {}
+
+    def dict_record(value) -> dict | None:
+        entries: dict = {}
+        keys_ssh = False
+        values_ssh = False
+        pairs: list = []
+        if isinstance(value, ast.Dict):
+            pairs = list(zip(value.keys, value.values))
+        elif isinstance(value, ast.Call) \
+                and _raw_dotted(value.func) == "dict":
+            pairs = [(ast.Constant(value=kw.arg), kw.value)
+                     for kw in value.keywords if kw.arg]
+        else:
+            return None
+        for k_node, v_node in pairs:
+            v_ssh = _expr_has_ssh_key(v_node, sym)
+            k_ssh = _expr_has_ssh_key(k_node, sym) \
+                if k_node is not None else False
+            values_ssh = values_ssh or v_ssh
+            keys_ssh = keys_ssh or k_ssh
+            k_str = _fold_str(k_node, sym) if k_node is not None \
+                else None
+            if k_str is not None:
+                entries[k_str] = v_ssh
+        return {"map": entries, "keys_ssh": keys_ssh,
+                "values_ssh": values_ssh}
+
+    for names, value in binds:
+        rec = dict_record(value)
+        if rec is not None:
+            for nm in names:
+                dict_maps[nm] = rec
+
+    def dict_side(base, side: str) -> bool | None:
+        """True/False when `base` is a dict whose `side` ("keys" /
+        "values") key-material status is known; None when `base`
+        is not a tracked dict at all."""
+        if isinstance(base, ast.Name) and base.id in dict_maps:
+            return dict_maps[base.id][
+                "keys_ssh" if side == "keys" else "values_ssh"]
+        if isinstance(base, (ast.Dict, ast.Call)):
+            rec = dict_record(base)
+            if rec is not None:
+                return rec["keys_ssh" if side == "keys"
+                           else "values_ssh"]
+        return None
+
+    def dict_entry(base, key_node) -> bool | None:
+        """SSH status of one dict entry when it is foldable:
+        True/False for a known dict + folded key, None when the
+        entry cannot be decided exactly (unknown dict, unfolded
+        key, or a `.get` default may decide instead)."""
+        rec = None
+        if isinstance(base, ast.Name):
+            rec = dict_maps.get(base.id)
+        elif isinstance(base, (ast.Dict, ast.Call)):
+            rec = dict_record(base)
+        if rec is None or key_node is None:
+            return None
+        k_str = _fold_str(key_node, sym)
+        if k_str is None:
+            return None
+        if k_str in rec["map"]:
+            return rec["map"][k_str]
+        return False  # a folded key the literal does not hold
+
+    def value_holds_key(value) -> bool:
+        """A bound VALUE denotes key material: the baseline folded
+        check, a key name/collection, or a dict access (subscript /
+        .get() / view call) into a key-holding dict."""
+        if _expr_has_ssh_key(value, sym):
+            return True
+        if isinstance(value, ast.Name):
+            return value.id in key_names or value.id in key_colls
+        if isinstance(value, ast.Subscript):
+            entry = dict_entry(value.value, value.slice)
+            if entry is not None:
+                return entry
+            side = dict_side(value.value, "values")
+            if side is not None:
+                return side
+            return isinstance(value.value, ast.Name) \
+                and value.value.id in key_colls
+        if isinstance(value, ast.Call) \
+                and isinstance(value.func, ast.Attribute):
+            base, attr = value.func.value, value.func.attr
+            if attr == "get":
+                entry = dict_entry(base, value.args[0]) \
+                    if value.args else None
+                if entry is not None:
+                    return entry
+                if len(value.args) >= 2 \
+                        and _expr_has_ssh_key(value.args[1], sym):
+                    return True  # the .get default is the key path
+                side = dict_side(base, "values")
+                if side is not None:
+                    return side
+                return isinstance(base, ast.Name) \
+                    and base.id in key_colls
+            if attr in ("values", "items", "keys"):
+                side = dict_side(base, "values" if attr != "keys"
+                                 else "keys")
+                if side is not None:
+                    return side
+                return isinstance(base, ast.Name) \
+                    and base.id in key_colls
+        return False
+
+    for _round in range(3):
+        before = (len(key_names), len(key_colls), len(dict_maps))
+        for names, value in binds:
+            if value_holds_key(value):
+                key_names.update(names)
+                if isinstance(value, (ast.List, ast.Tuple, ast.Set,
+                                      ast.Dict, ast.Call, ast.ListComp,
+                                      ast.GeneratorExp, ast.Name)):
+                    key_colls.update(names)
+            if isinstance(value, ast.Name) \
+                    and value.id in dict_maps:
+                for nm in names:
+                    dict_maps.setdefault(nm, dict_maps[value.id])
+        for target, it in fors:
+            names = target_names(target)
+            if not names:
+                continue
+            # `.items()` unpacking: (k, v) — each side judged
+            # against the dict side it actually receives.
+            if isinstance(it, ast.Call) \
+                    and isinstance(it.func, ast.Attribute) \
+                    and it.func.attr == "items" \
+                    and isinstance(target, (ast.Tuple, ast.List)) \
+                    and len(target.elts) == 2:
+                for elt, side in ((target.elts[0], "keys"),
+                                  (target.elts[1], "values")):
+                    elt_names = target_names(elt)
+                    known = dict_side(it.func.value, side)
+                    if known or (known is None
+                                 and value_holds_key(it)):
+                        key_names.update(elt_names)
+                continue
+            if isinstance(it, ast.Call) \
+                    and isinstance(it.func, ast.Attribute) \
+                    and it.func.attr in ("values", "keys"):
+                side = "values" if it.func.attr == "values" \
+                    else "keys"
+                known = dict_side(it.func.value, side)
+                if known or (known is None and value_holds_key(it)):
+                    key_names.update(names)
+                continue
+            if isinstance(it, ast.Name) and it.id in dict_maps:
+                # Iterating a dict yields its KEYS.
+                if dict_maps[it.id]["keys_ssh"]:
+                    key_names.update(names)
+                continue
+            if _expr_has_ssh_key(it, sym) or (
+                    isinstance(it, ast.Name) and it.id in key_colls) or (
+                    isinstance(it, ast.Subscript)
+                    and isinstance(it.value, ast.Name)
+                    and it.value.id in key_colls) or (
+                    isinstance(it, ast.Call)
+                    and value_holds_key(it)):
+                key_names.update(names)
+        if (len(key_names), len(key_colls), len(dict_maps)) == before:
+            break  # fixpoint: further rounds can find nothing new
+    return key_names, key_colls, dict_maps
+
+
+def _expr_is_ssh_key(node: ast.AST, key_names: set, key_colls: set,
+                     sym: _Symbols, dict_maps: dict | None = None) \
+        -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in key_names or node.id in key_colls
+    if isinstance(node, ast.Call) \
+            and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == "get" and node.args:
+        # A .get() into a tracked dict: exact when the key folds,
+        # collection discipline otherwise.
+        base = node.func.value
+        if dict_maps and isinstance(base, ast.Name) \
+                and base.id in dict_maps:
+            rec = dict_maps[base.id]
+            k_str = _fold_str(node.args[0], sym)
+            if k_str is not None:
+                if k_str in rec["map"]:
+                    return rec["map"][k_str]
+                return len(node.args) >= 2 and _expr_has_ssh_key(
+                    node.args[1], sym)
+            return rec["values_ssh"]
+        return _expr_is_ssh_key(base, key_names, key_colls, sym,
+                                dict_maps)
+    if isinstance(node, ast.Subscript):
+        if dict_maps and isinstance(node.value, ast.Name) \
+                and node.value.id in dict_maps:
+            rec = dict_maps[node.value.id]
+            k_str = _fold_str(node.slice, sym)
+            if k_str is not None:
+                return rec["map"].get(k_str, False)
+            return rec["values_ssh"]
+        return _expr_is_ssh_key(node.value, key_names, key_colls, sym,
+                                dict_maps)
+    if isinstance(node, ast.Starred):
+        return _expr_is_ssh_key(node.value, key_names, key_colls, sym,
+                                dict_maps)
+    return _expr_has_ssh_key(node, sym)
+
+
 def _ast_findings(path: Path, rel: str, text: str, add, flags: dict,
                   note=None, note_signal=None) -> set[int]:
     """AST checks for one Python file. `flags` is the SCAN-scoped dict —
@@ -1664,6 +3036,9 @@ def _ast_findings(path: Path, rel: str, text: str, add, flags: dict,
         return metadata_send_lines
     sym = _Symbols()
     _collect_symbols(tree, sym)
+    ssh_key_names, ssh_key_colls, ssh_dict_maps = \
+        _ssh_key_bindings(tree, sym) \
+        if _ssh_bindings_relevant(tree, sym) else (set(), set(), {})
     local: dict = {}
 
     for node in ast.walk(tree):
@@ -1809,24 +3184,53 @@ def _ast_findings(path: Path, rel: str, text: str, add, flags: dict,
         if dotted.startswith("subprocess."):
             add("SHELL_SUBPROCESS", rel, line)
             pieces: list[str] = []
+            pieces_base: list[str] = []
             for arg in node.args:
                 folded = _fold_str(arg, sym)
                 if folded:
                     pieces.append(folded)
+                    pieces_base.append(folded)
                 lst = _fold_list(arg, sym)
                 if lst:
                     pieces.extend(str(i) for i in lst)
+                    pieces_base.extend(str(i) for i in lst)
+                if isinstance(arg, (ast.List, ast.Tuple)) and not lst:
+                    # The whole list did not fold (it holds a name):
+                    # fold its elements individually instead, and
+                    # represent a one-hop key name (['cat', file_path]
+                    # over a key-path list) by the path it holds, so
+                    # the shell matchers below judge the real command.
+                    for el in arg.elts:
+                        f2 = _fold_str(el, sym)
+                        if f2:
+                            pieces.append(f2)
+                        elif isinstance(el, ast.Name) \
+                                and el.id in ssh_key_names:
+                            pieces.append("~/.ssh/id_rsa")
             joined = " ".join(pieces)
-            if ("curl" in joined or "wget" in joined) and any(
-                    t in joined for t in ("-d", "--data", "--post-data", "@")):
-                if _is_metadata_text(joined):
+            # The subprocess curl/wget check is tokenised (fix
+            # wave): the old substring search matched mktemp's
+            # `-d` inside a bash -c string and a bare `@` anywhere
+            # (an email address, user@host). The tokeniser judges
+            # joined_base — the BASELINE argument construction
+            # (fully folded arguments only) — not the per-element
+            # fallback pieces above: that fallback exists for the
+            # SSH one-hop check below, and letting it feed NSD was
+            # a wave-1 gain source (a subprocess list whose elements
+            # only fold individually, e.g. ["curl", "-d", result],
+            # was invisible to the baseline AST check entirely).
+            joined_base = " ".join(pieces_base)
+            if ("curl" in joined_base or "wget" in joined_base) \
+                    and _nsd_shell_hit(joined_base):
+                if _is_metadata_text(joined_base):
                     metadata_send_lines.add(line)
                 else:
                     add("NETWORK_SEND_DATA", rel, line)
                     flags["send"] = (rel, line)
             if joined:
-                _check_credential_value(joined, rel, line, add,
-                                        agent_read=True)
+                _check_credential_value(
+                    joined, rel, line, add, agent_read=True,
+                    ssh_read=_ssh_shell_hit(joined))
 
         # Decode-class calls (for DECODE_AND_RUN co-occurrence — strictly
         # within THIS file; see the local flags note above).
@@ -1845,29 +3249,110 @@ def _ast_findings(path: Path, rel: str, text: str, add, flags: dict,
             agent_read = dotted in ("open", "io.open") or (
                 arg_idx == 0 and (dotted.startswith("shutil.copy")
                                   or dotted == "copyfile"))
+            # SSH reader contexts (fix wave): the agent_read
+            # contexts, minus an open() in a write mode (creating /
+            # planting a key file is not reading one), plus a key
+            # path flowing into an HTTP send call's arguments (the
+            # send consumes it — the upload/send-argument sink).
+            ssh_read = agent_read
+            open_write = False
+            if dotted in ("open", "io.open"):
+                mode = None
+                if len(node.args) >= 2:
+                    mode = _fold_str(node.args[1], sym)
+                for kw in node.keywords:
+                    if kw.arg == "mode":
+                        mode = _fold_str(kw.value, sym) or mode
+                if mode and mode[0] in "wax":
+                    open_write = True
+                    ssh_read = False
+            if module in ("requests", "httpx", "aiohttp") \
+                    and method in _SEND_METHODS:
+                ssh_read = True
+            if dotted in ("os.system", "os.popen"):
+                # A folded shell command string is judged as a
+                # shell statement, like a subprocess string.
+                arg_folded = _fold_str(arg, sym)
+                if arg_folded and _ssh_shell_hit(arg_folded):
+                    ssh_read = True
             folded = _fold_str(arg, sym)
             if folded:
                 _check_credential_value(folded, rel, line, add,
-                                        agent_read=agent_read)
+                                        agent_read=agent_read,
+                                        ssh_read=ssh_read)
             lst = _fold_list(arg, sym)
             if lst:
                 _check_credential_value(" ".join(str(i) for i in lst),
                                         rel, line, add,
-                                        agent_read=agent_read)
+                                        agent_read=agent_read,
+                                        ssh_read=ssh_read)
             # A constructor like Path(home, ".s"+"sh", "id_"+"rsa"): join args.
         if node.args and len(node.args) >= 2:
             folded_parts = [_fold_str(a, sym) for a in node.args]
             if all(p is not None for p in folded_parts):
                 _check_credential_value("/".join(folded_parts), rel, line, add)
 
+        # Reader METHODS on a path object: Path(...).read_text(),
+        # key_path.read_bytes(), path.open() — the key path is the
+        # receiver, not an argument (the ssh-stealer sample shape).
+        if isinstance(node.func, ast.Attribute) \
+                and node.func.attr in ("read_text", "read_bytes", "open"):
+            recv = node.func.value
+            if _expr_has_ssh_key(recv, sym) or (
+                    isinstance(recv, ast.Name)
+                    and recv.id in ssh_key_names):
+                add("SSH_CREDENTIAL_READ", rel, line)
+
+        # One-hop (fix wave): a name/collection bound to key
+        # material flowing into a reader in this file — open(...)
+        # arguments, a copy call's source, an HTTP send argument.
+        if ssh_key_names or ssh_key_colls:
+            reader_exprs: list = []
+            if dotted in ("open", "io.open"):
+                if not open_write:
+                    reader_exprs = list(node.args) + \
+                        [kw.value for kw in node.keywords]
+            elif dotted.startswith("shutil.copy") \
+                    or dotted == "copyfile":
+                reader_exprs = list(node.args[:1])
+            elif module in ("requests", "httpx", "aiohttp") \
+                    and method in _SEND_METHODS:
+                reader_exprs = list(node.args) + \
+                    [kw.value for kw in node.keywords]
+            for e in reader_exprs:
+                if _expr_is_ssh_key(e, ssh_key_names, ssh_key_colls,
+                                    sym, ssh_dict_maps):
+                    add("SSH_CREDENTIAL_READ", rel, line)
+                    break
+
+        # One-hop CONTAINMENT (fix wave 5): a send call's argument
+        # expression that contains key material nested inside it —
+        # an inline dict/list literal holding a key path, passed
+        # directly (`json={"files": ["~/.ssh/id_rsa"]}`) — is an
+        # upload/send argument for that material, exactly like a
+        # bound name or a bare literal argument. The bindings-
+        # guarded pass above cannot see it (there is no binding),
+        # and the folded-value pass cannot fold a dict literal.
+        # Containment is judged for SEND arguments only, and the
+        # contained element must itself be key material.
+        if module in ("requests", "httpx", "aiohttp") \
+                and method in _SEND_METHODS:
+            for e in list(node.args) + [kw.value
+                                        for kw in node.keywords]:
+                if _expr_has_ssh_key(e, sym):
+                    add("SSH_CREDENTIAL_READ", rel, line)
+                    break
+
         # Credential enumeration via glob on home-shaped targets.
+        # Enumeration alone is NOT a key read (fix wave): SSH fires
+        # only if a glob result is actually read, which the one-hop
+        # pass above covers (a loop variable over a key glob is a
+        # key-name binding; open()/cat of it fires there).
         if isinstance(node.func, ast.Attribute) and node.func.attr in ("glob", "rglob"):
             for arg in node.args:
                 folded = _fold_str(arg, sym)
                 if folded and ("id_" in folded or ".ssh" in folded or "*key" in folded):
                     add("CREDENTIAL_ENUMERATION", rel, line)
-                    if ".ssh" in folded:
-                        add("SSH_CREDENTIAL_READ", rel, line)
 
     # Error / environment leakage into tool results: a `return` inside an
     # except block that hands back the exception itself (str(e),
@@ -7886,6 +9371,504 @@ def compute_promotions(findings, line_text) -> list[Finding]:
     return out
 
 
+def _blank_nonread_ssh_commands(sentence: str) -> str:
+    """Blank the command spans in a doc sentence that the shell
+    matcher already excludes (fix wave 5): `ssh-copy-id` copies a
+    PUBLIC key TO a server (its "copy" is not a read of local key
+    material, and the .pub path it names is not one either), and
+    `ssh-keygen` GENERATION creates key material rather than
+    reading it (only -y / -p read an existing key, so a keygen
+    span carrying those flags is kept). Without this, the prose
+    access-verb matcher read ssh-copy-id's own name as the access
+    verb governing the key path (ASB04_002681). A span runs to the
+    next clause boundary (comma / semicolon / backtick) or the
+    end of the sentence, so a genuine read clause that follows
+    still judges on its own."""
+    def _keygen(m: re.Match) -> str:
+        span = m.group()
+        flags: set = set()
+        for t in span.split():
+            if t.startswith("-") and not t.startswith("--") \
+                    and len(t) > 1:
+                flags.update(t[1:])
+        return span if flags & {"y", "p"} else " " * len(span)
+
+    out = re.sub(r"\bssh-copy-id\b[^,;`]*",
+                 lambda m: " " * len(m.group()), sentence)
+    out = re.sub(r"\bssh-keygen\b[^,;`]*", _keygen, out)
+    return out
+
+
+_DOC_SHELL_FENCE_INFOS = {"", "bash", "sh", "shell", "zsh",
+                          "console", "shellsession"}
+
+
+def _doc_fence_split(lines: list[str]):
+    """Split doc lines into (kept, fence_blocks): `kept` is the
+    lines with fenced regions and fence markers blanked (the
+    prose surface — _surface_blocks' discipline), and
+    fence_blocks is [(info, [(lineno, text), ...]), ...] with
+    the fenced lines themselves (the command surface). An odd
+    trailing fence marker is ordinary text, as in
+    _surface_blocks."""
+    fence_lines = [i for i, line in enumerate(lines)
+                   if line.lstrip().startswith("```")
+                   or line.lstrip().startswith("~~~")]
+    unpaired = fence_lines[-1] if len(fence_lines) % 2 else -1
+    kept: list[str] = []
+    blocks: list = []
+    in_fence = False
+    cur: list = []
+    cur_info = ""
+    for i, line in enumerate(lines):
+        s = line.lstrip()
+        if i != unpaired and (s.startswith("```")
+                              or s.startswith("~~~")):
+            if in_fence:
+                blocks.append((cur_info, cur))
+                cur = []
+                in_fence = False
+            else:
+                in_fence = True
+                info = s[3:].strip().split()
+                cur_info = info[0].lower() if info else ""
+            kept.append("")
+            continue
+        if in_fence:
+            cur.append((i + 1, line))
+            kept.append("")
+        else:
+            kept.append(line)
+    if cur:
+        blocks.append((cur_info, cur))
+    return kept, blocks
+
+
+def _balanced_text_window(text: str, pos: int,
+                          limit: int = 8000) -> str:
+    """The balanced bracket window starting at `pos` when the
+    character there opens a bracket; otherwise the rest of the
+    line. Quote-aware depth scan, bounded (doc containment pass,
+    fix wave 5)."""
+    if pos >= len(text):
+        return ""
+    if text[pos] not in "{[(":
+        end = text.find("\n", pos)
+        return text[pos:] if end == -1 else text[pos:end]
+    depth = 0
+    quote: str | None = None
+    i = pos
+    while i < len(text) and i - pos < limit:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch in "{[(":
+            depth += 1
+        elif ch in "}])":
+            depth -= 1
+            if depth == 0:
+                return text[pos:i + 1]
+        i += 1
+    return text[pos:i]
+
+
+def _doc_ssh_send_containment(rel: str, lines: list[str],
+                              add) -> None:
+    """Doc-surface one-hop containment (fix wave 5): Python code
+    quoted in a document (ASB04_001888's telemetry snippet inside
+    SKILL.md) never reaches the AST pass, so the send-containment
+    discipline is applied textually — a name bound in the doc to
+    a collection containing a key literal, or a key literal
+    nested directly in a send call's argument window, counts as
+    an upload/send argument for that material. Send calls only;
+    the contained element must itself be key material."""
+    text = "\n".join(lines)
+    if "ssh" not in text and "id_rsa" not in text \
+            and "id_ed25519" not in text:
+        return
+    key_names: set = set()
+    for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=(?![=])\s*",
+                         text):
+        window = _balanced_text_window(text, m.end())
+        if window and _is_ssh_key_text(window):
+            key_names.add(m.group(1))
+    for m in re.finditer(
+            r"\b(?:requests|httpx|aiohttp)\s*\.\s*"
+            r"(?:post|put|patch)\s*\(", text):
+        window = _balanced_text_window(text, m.end() - 1)
+        if not window:
+            continue
+        if _is_ssh_key_text(window) or any(
+                re.search(r"\b" + re.escape(n) + r"\b", window)
+                for n in key_names):
+            lineno = text[:m.start()].count("\n") + 1
+            add("SSH_CREDENTIAL_READ", rel, lineno,
+                lines[lineno - 1] if lineno - 1 < len(lines) else "",
+                severity_cap="caution")
+            return
+
+
+def _doc_ssh_subst_hit(stmt: str, key_vars: set) -> bool:
+    """True when a `$(...)` span inside a fenced shell statement
+    is itself a key read (fix wave 6). A substitution is
+    EXECUTED, quoted or not: in `curl ... -d "$(cat
+    ~/.ssh/id_rsa)"` the read verb sits inside the substitution,
+    where the statement matcher sees only one quoted data token
+    for curl (whose own arms judge `-d @file` / upload forms, not
+    a substitution body), and the segment splitter keeps a
+    quoted substitution fused into its token. So each span's
+    body is judged with the shell matcher in its own right.
+    This is READ detection only — the NSD tokeniser's rule that
+    substitution spans are opaque governs FLAG attribution for
+    NETWORK_SEND_DATA and is not imported here. A span naming a
+    non-key .ssh file (`$(cat ~/.ssh/known_hosts)`,
+    `$(cat ~/.ssh/config)`) stays quiet, because the inner
+    judgement still requires key material."""
+    for lo, hi in _subst_spans(stmt):
+        inner = stmt[lo + 2:hi] if hi > lo else ""
+        if not inner:
+            continue
+        if _ssh_shell_hit(inner, key_vars):
+            return True
+        if "$(" in inner and _doc_ssh_subst_hit(inner, key_vars):
+            return True
+    return False
+
+
+_DOC_PYTHON_FENCE_INFOS = {"python", "py", "python3", "py3"}
+
+_DOC_STR_LITERAL_RE = re.compile(
+    r"'((?:\\.|[^'\\\n])*)'|\"((?:\\.|[^\"\\\n])*)\"")
+
+_DOC_SUBPROCESS_RE = re.compile(
+    r"\b(?:subprocess\s*\.\s*(?:run|Popen|call|check_output|"
+    r"check_call|getoutput|getstatusoutput)|os\s*\.\s*"
+    r"(?:system|popen)|commands\s*\.\s*getoutput)\s*\(")
+
+
+def _doc_str_literals(text: str) -> list[str]:
+    """Contents of the single-line string literals in `text`."""
+    return [m.group(1) if m.group(1) is not None else m.group(2)
+            for m in _DOC_STR_LITERAL_RE.finditer(text)]
+
+
+def _doc_names_in(text: str, names) -> bool:
+    return any(re.search(r"\b" + re.escape(n) + r"\b", text)
+               for n in names)
+
+
+def _doc_fence_key_bindings(text: str):
+    """Fence-local one-hop bindings for quoted Python (fix
+    wave 6): (key_names, shell_strs).
+
+    key_names — names bound IN THIS FENCE to key material: an
+    assignment whose value window is key material (a literal
+    path, a list/dict literal containing one, a Path.home() /
+    '.ssh' / 'id_rsa' join, or a value-form expression built
+    from an already-bound name), and loop variables iterating
+    a bound collection (or a key-material iterable, including
+    `.values()` / `.items()` forms and key globs). A name bound
+    to the RESULT of a call (a subprocess result, a read
+    result, a send response) is not a binding — the value
+    window must be a value form (bracket/quote-led, a Path /
+    join / expanduser expression, or a paren-free alias /
+    concatenation), not a produced result.
+
+    shell_strs — names bound to a string literal (the
+    `ssh_cmd = 'cd ~/.ssh && ls && cat *'` shape), mapped to
+    the literal's contents, for the subprocess arm."""
+    key_names: set = set()
+    shell_strs: dict = {}
+    for _round in range(4):
+        changed = False
+        for m in re.finditer(
+                r"\b([A-Za-z_][A-Za-z0-9_]*)\s*"
+                r"(?::[^=\n]+)?=(?![=])\s*", text):
+            name = m.group(1)
+            window = _balanced_text_window(text, m.end())
+            if not window:
+                continue
+            stripped = window.strip()
+            lits = _doc_str_literals(stripped)
+            if len(lits) == 1 and stripped in (
+                    "'" + lits[0] + "'", '"' + lits[0] + '"') \
+                    and name not in shell_strs:
+                shell_strs[name] = lits[0]
+                changed = True
+            if name in key_names:
+                continue
+            value_form = stripped[:1] in "[{('\"" \
+                or re.match(r"(?:[fFrRbBuU]{1,2})['\"]", stripped) \
+                or re.match(r"(?:Path|pathlib|os\.path)\b",
+                            stripped) \
+                or "(" not in stripped \
+                or re.search(r"\b(?:join|expanduser)\b", stripped)
+            if value_form and (
+                    _is_ssh_key_text(window)
+                    or _doc_names_in(window, key_names)):
+                key_names.add(name)
+                changed = True
+        for m in re.finditer(
+                r"\bfor\s+([A-Za-z_][A-Za-z0-9_\s,]*?)\s+in\s+"
+                r"([^\n:]+):", text):
+            iterable = m.group(2)
+            if not (_is_ssh_key_text(iterable)
+                    or _doc_names_in(iterable, key_names)):
+                continue
+            for name in m.group(1).split(","):
+                name = name.strip()
+                if name and name not in key_names:
+                    key_names.add(name)
+                    changed = True
+        if not changed:
+            break
+    return key_names, shell_strs
+
+
+def _doc_ssh_python_fence(rel: str, block_lines: list,
+                          lines: list[str], add) -> None:
+    """SSH_CREDENTIAL_READ in a fenced Python block (fix wave
+    6), at CAUTION. Quoted Python never reaches the AST pass,
+    and the wave-5 doc pass judged only shell fences plus send
+    containment, so a real reader in a Python fence was
+    invisible. The judgement is fence-local and reader-gated,
+    mirroring the code surface's discipline:
+
+    - a name/collection bound to key material in THIS fence
+      (see _doc_fence_key_bindings) counts only when a reader
+      in the same fence consumes it: open() / .open() not in
+      a write mode, .read_text() / .read_bytes() on it, or a
+      subprocess / os.system call consuming it;
+    - a subprocess / os.system argument that IS a shell
+      command — a string literal, or a name bound to one in
+      this fence — is judged by the SHELL matcher, so
+      `subprocess.check_output(ssh_cmd)` with
+      `ssh_cmd = 'cd ~/.ssh && ls && cat *'` fires via the
+      key-dir arm exactly as the .py AST surface does;
+    - a direct key literal consumed by one of those readers
+      fires the same way.
+
+    Merely listing / printing key paths (no reader), an
+    exists()/chmod-style use, and an open() in write mode
+    stay quiet."""
+    if not block_lines:
+        return
+    text = "\n".join(t for _ln, t in block_lines)
+
+    def fire(pos: int) -> bool:
+        idx = text[:pos].count("\n")
+        lineno = block_lines[idx][0] \
+            if 0 <= idx < len(block_lines) else block_lines[-1][0]
+        add("SSH_CREDENTIAL_READ", rel, lineno,
+            lines[lineno - 1] if 0 < lineno <= len(lines) else "",
+            severity_cap="caution")
+        return True
+
+    key_names, shell_strs = _doc_fence_key_bindings(text)
+
+    # open() / .open() consuming key material or a bound name.
+    for m in re.finditer(r"\bopen\s*\(", text):
+        window = _balanced_text_window(text, m.end() - 1)
+        if not window:
+            continue
+        if _open_write_mode("open" + window, {}):
+            continue  # a write-mode open creates, not reads
+        if _is_ssh_key_text(window) \
+                or _doc_names_in(window, key_names):
+            fire(m.start())
+            return
+
+    # .read_text() / .read_bytes() on key material / a bound
+    # name: the receiver expression may wrap over the lines
+    # just before the call, so judge the text back to the
+    # previous statement boundary (blank line or semicolon).
+    for m in re.finditer(r"\.\s*(?:read_text|read_bytes)\s*\(",
+                         text):
+        bound = max(text.rfind("\n\n", 0, m.start()),
+                    text.rfind(";", 0, m.start()))
+        segment = text[bound + 1:m.start()]
+        if _is_ssh_key_text(segment) \
+                or _doc_names_in(segment, key_names):
+            fire(m.start())
+            return
+
+    # subprocess / os.system: the command argument judged as
+    # shell when it is (or names) a shell string; a list-form
+    # command whose verb literal is a shell reader and whose
+    # arguments carry key material / a bound name also fires.
+    for m in _DOC_SUBPROCESS_RE.finditer(text):
+        window = _balanced_text_window(text, m.end() - 1)
+        if not window:
+            continue
+        hit = False
+        for name, lit in shell_strs.items():
+            if re.search(r"\b" + re.escape(name) + r"\b",
+                         window) \
+                    and _ssh_shell_hit(lit, set()):
+                hit = True
+                break
+        if not hit:
+            for lit in _doc_str_literals(window):
+                if _ssh_shell_hit(lit, set()):
+                    hit = True
+                    break
+        if not hit and (
+                _is_ssh_key_text(window)
+                or _doc_names_in(window, key_names)):
+            verbs = set()
+            for lit in _doc_str_literals(window):
+                words = lit.strip().split()
+                if words:
+                    verbs.add(words[0].replace("\\", "/")
+                              .rsplit("/", 1)[-1])
+            if verbs & (_SSH_READ_ANY | _SSH_COPY_CMDS
+                        | _SSH_ARCHIVE_CMDS
+                        | {"dd", "openssl", "curl", "wget"}):
+                hit = True
+        if hit:
+            fire(m.start())
+            return
+
+
+def _doc_ssh_findings(rel: str, lines: list[str], add) -> None:
+    """SSH_CREDENTIAL_READ on the documentation surface (fix
+    wave 5). Three judgements, all at CAUTION:
+    - PROSE (fences stripped): an access verb governing a
+      key-material path in the same sentence — with the shell
+      matcher's non-read commands (ssh-copy-id, ssh-keygen
+      generation) blanked first, so their names/paths are not
+      the access evidence.
+    - FENCED SHELL: lines inside shell fences judge with the
+      shell statement matcher itself, so a fence's `cat
+      ~/.ssh/id_rsa` fires while its ssh-copy-id / ssh-keygen
+      generation / find -exec chmod do not, and its find -exec
+      cp and `openssl ... -in <key>` do. Before this wave the
+      fence content was only ever seen by the prose matcher,
+      fused into a sentence with its heading — command position
+      was lost, which is why the find -exec and openssl shapes
+      in SKILL.md fences never fired.
+    - SEND CONTAINMENT in quoted Python code (see
+      _doc_ssh_send_containment).
+
+    Fix wave 6 adds, still all at CAUTION:
+    - FENCED SHELL SUBSTITUTIONS: a `$(...)` span inside a
+      fenced statement is executed, so its body is judged
+      with the shell matcher too (see _doc_ssh_subst_hit) —
+      the `curl ... -d "$(cat ~/.ssh/id_rsa)"` shape, whose
+      read verb lives inside a quoted substitution, escaped
+      the statement matcher.
+    - FENCED PYTHON: a fence-local one-hop (see
+      _doc_ssh_python_fence) — names/collections bound to
+      key material in the fence, consumed by a reader in
+      the same fence, and subprocess/os.system arguments
+      judged by the shell matcher. The full AST pass is
+      deliberately NOT run over fences: that would change
+      every rule's doc behaviour, not just this one's."""
+    kept, fence_blocks = _doc_fence_split(lines)
+    for _bs, block, spans in _text_blocks(kept):
+        for off, sentence in _agent_sentences(block):
+            if _agent_sentence_negated(sentence):
+                continue
+            judged = _blank_nonread_ssh_commands(sentence)
+            if _is_ssh_key_text(judged) \
+                    and _AGENT_PROSE_ACCESS_RE.search(judged):
+                add("SSH_CREDENTIAL_READ", rel,
+                    _block_line(spans, off), block[:160],
+                    severity_cap="caution")
+    key_vars: set = set()
+    for info, block_lines in fence_blocks:
+        if info not in _DOC_SHELL_FENCE_INFOS:
+            continue
+        texts = [t for _ln, t in block_lines]
+        for start, _end, stmt in _logical_statements(
+                texts, join_braces=False):
+            if _ssh_shell_hit(stmt, key_vars) \
+                    or _doc_ssh_subst_hit(stmt, key_vars):
+                lineno = block_lines[start - 1][0] \
+                    if 0 < start <= len(block_lines) else 1
+                add("SSH_CREDENTIAL_READ", rel, lineno,
+                    lines[lineno - 1] if lineno - 1 < len(lines)
+                    else stmt, severity_cap="caution")
+    for info, block_lines in fence_blocks:
+        if info in _DOC_PYTHON_FENCE_INFOS:
+            _doc_ssh_python_fence(rel, block_lines, lines, add)
+    _doc_ssh_send_containment(rel, lines, add)
+
+
+def _fixwave_findings(rel: str, path: Path, lines: list[str],
+                      rule_lines: list[str], doc: bool, add,
+                      suffix: str) -> None:
+    """Dedicated fix-wave matchers for one file: NETWORK_SEND_DATA's
+    curl/wget surface and SSH_CREDENTIAL_READ's non-AST surfaces.
+
+    NSD on SHELL files is judged on the joined logical
+    (continuation-joined, variable-expanded) statement with the
+    full tokeniser (_nsd_shell_hit): the spec'd data-flag family,
+    curl/wget in command position, case-sensitive flags, quotes
+    and $(...) spans opaque (fix wave 4 restores this on the
+    shell surface; wave 2 had narrowed it to the baseline family
+    per physical line). Every other surface's NSD judging lives
+    in the line pass in scan_folder: documentation files get the
+    base per-physical-line regex exactly (_NSD_DOC_LINE_RE), and
+    non-shell code files get the baseline line regex with the
+    case and substitution repairs (_nsd_code_line_hit). The AST
+    subprocess tokenisation in _ast_findings shares the same
+    tokeniser (it judges the baseline-constructed joined
+    string). SSH judges: shell files with the
+    statement matcher (read verbs only), code files by reader
+    context on the line (the AST pass is primary for Python; the
+    line check supplies evidence), and documentation by
+    access-verb-governed sentences at CAUTION."""
+    shell = suffix in (".sh", ".bash", ".zsh")
+    if shell and any("curl" in l or "wget" in l for l in rule_lines):
+        for start, _end, stmt in _logical_statements(
+                rule_lines, join_braces=False):
+            if _nsd_shell_hit(stmt) \
+                    and not _is_metadata_text(stmt):
+                add("NETWORK_SEND_DATA", rel, start,
+                    lines[start - 1] if start - 1 < len(lines)
+                    else stmt)
+    if doc:
+        _doc_ssh_findings(rel, lines, add)
+        return
+    if shell:
+        key_vars: set = set()
+        for start, _end, stmt in _logical_statements(
+                rule_lines, join_braces=False):
+            if _ssh_shell_hit(stmt, key_vars):
+                add("SSH_CREDENTIAL_READ", rel, start,
+                    lines[start - 1] if start - 1 < len(lines)
+                    else stmt)
+            elif _ssh_enum_shell_hit(stmt, key_vars):
+                # Key-material enumeration with no reader consuming
+                # its results (fix wave 3): a caution, never a read.
+                add("CREDENTIAL_ENUMERATION", rel, start,
+                    lines[start - 1] if start - 1 < len(lines)
+                    else stmt)
+    else:
+        # Python too: the AST pass is primary, but this line check
+        # supplies the finding's evidence text (the AST hits are
+        # evidence-free) and catches reader shapes spelled as plain
+        # text. Comments are already blanked in rule_lines, and a
+        # reader call must be present on the line — a docstring
+        # mention without one does not fire.
+        for lineno, line_text in enumerate(rule_lines, start=1):
+            if _is_ssh_key_text(line_text) \
+                    and _SSH_CODE_READER_RE.search(line_text) \
+                    and not _open_write_mode(line_text, {}):
+                add("SSH_CREDENTIAL_READ", rel, lineno,
+                    lines[lineno - 1] if lineno - 1 < len(lines)
+                    else line_text)
+
+
 def scan_folder(root: Path) -> ScanResult:
     root = root.resolve()
     result = ScanResult(target=str(root))
@@ -8135,6 +10118,19 @@ def scan_folder(root: Path) -> ScanResult:
         rule_lines = _blank_spans(scan_lines, comment_spans)
         if path.name == "setup.py" and string_spans:
             rule_lines = _blank_spans(rule_lines, string_spans)
+        # RM_RF (fix wave) is deferred: hits are collected with
+        # their own-creation provenance judgement and emitted after
+        # the line passes — BLOCK if any hit's target is not
+        # provably the skill's own artefact, CAUTION if all are.
+        rm_hits: list[tuple[int, bool]] = []
+        rm_prov = _rm_provenance("\n".join(scan_lines)) \
+            if _RM_PATTERN.search(text) else ({}, {})
+        rm_line_offsets: list[int] = []
+        _rm_off = 0
+        for _sl in scan_lines:
+            rm_line_offsets.append(_rm_off)
+            _rm_off += len(_sl) + 1
+        rm_shell = suffix in (".sh", ".bash", ".zsh")
         for lineno, line_text in enumerate(rule_lines, start=1):
             if doc and NEGATION_RE.search(line_text):
                 # Documentation that warns AGAINST a pattern ("never reads
@@ -8155,6 +10151,14 @@ def scan_folder(root: Path) -> ScanResult:
                         lines[lineno - 1] if lineno - 1 < len(lines)
                         else line_text)
             for rule in LINE_RULES:
+                if rule.id == "RM_RF":
+                    if rule.pattern.search(line_text[:MAX_LINE_CHARS]):
+                        rm_hits.append((lineno, _rm_line_qualifies(
+                            line_text, rm_prov, rm_shell,
+                            rm_line_offsets[lineno - 1]
+                            if lineno - 1 < len(rm_line_offsets)
+                            else 0)))
+                    continue
                 if rule.id == "RUNTIME_PACKAGE_INSTALL" \
                         and inst_class is not None:
                     if inst_class == "url":
@@ -8176,7 +10180,25 @@ def scan_folder(root: Path) -> ScanResult:
                 if rule.id == "ENV_FILE_READ" and stripped.startswith(("#", "//")):
                     # A comment mentioning .env is prose, not a read.
                     continue
-                if rule.pattern.search(line_text[:MAX_LINE_CHARS]):
+                if rule.pattern.search(line_text[:MAX_LINE_CHARS]) or (
+                        rule.id == "NETWORK_SEND_DATA" and (
+                            (doc and _NSD_DOC_LINE_RE.search(
+                                line_text[:MAX_LINE_CHARS]))
+                            or (not doc and suffix not in (
+                                    ".sh", ".bash", ".zsh")
+                                and _nsd_code_line_hit(
+                                    line_text[:MAX_LINE_CHARS])))):
+                    # NSD line surfaces (fix wave 2, extended): the
+                    # line pass is the ONLY line-level NSD judge,
+                    # and it splits by surface — documentation gets
+                    # the base per-physical-line regex exactly
+                    # (_NSD_DOC_LINE_RE, with this pass's negation
+                    # and metadata skips above and the doc severity
+                    # cap on the add); non-shell code files get the
+                    # baseline line regex with only the case and
+                    # substitution repairs (_nsd_code_line_hit);
+                    # shell files get NEITHER here — their NSD is
+                    # the statement tokeniser in _fixwave_findings.
                     add(rule.id, rel, lineno, lines[lineno - 1] if lineno - 1 < len(lines) else line_text,
                         severity_cap="caution" if doc else None)
 
@@ -8197,11 +10219,27 @@ def scan_folder(root: Path) -> ScanResult:
                 if lineno in comment_only:
                     continue
                 for rule in LINE_RULES:
-                    if rule.pattern.search(line_text[:MAX_LINE_CHARS]):
+                    if rule.id == "RM_RF":
+                        if rule.pattern.search(
+                                line_text[:MAX_LINE_CHARS]):
+                            rm_hits.append((lineno,
+                                            _rm_line_qualifies(
+                                                line_text, rm_prov,
+                                                False,
+                                                rm_line_offsets[lineno - 1]
+                                                if lineno - 1 < len(rm_line_offsets)
+                                                else 0)))
+                        continue
+                    if rule.pattern.search(line_text[:MAX_LINE_CHARS]) or (
+                            rule.id == "NETWORK_SEND_DATA"
+                            and _nsd_code_line_hit(
+                                line_text[:MAX_LINE_CHARS])):
                         # The squeezed text is what this pass
                         # judged; it is also the gate-signal text
                         # (the stored evidence stays the original
-                        # line, as before).
+                        # line, as before). NSD on this JS surface
+                        # uses the same repaired code-line judging
+                        # as the main line pass (fix wave 2).
                         add(rule.id, rel, lineno, lines[lineno - 1],
                             signal_text=line_text)
             # fetch(url, {method: "POST", body}) spanning lines.
@@ -8212,6 +10250,24 @@ def scan_folder(root: Path) -> ScanResult:
                         add("NETWORK_SEND_DATA", rel, lineno, line_text)
                         flags["send"] = (rel, lineno)
                         break
+
+        # Deferred RM_RF emission (fix wave): one unprovenanced
+        # target anywhere in the file keeps the BLOCK; a file whose
+        # every rm -rf target is provably its own artefact demotes
+        # to CAUTION (never suppressed — recursive deletion is
+        # always worth a look).
+        if rm_hits:
+            blockers = [ln for ln, q in rm_hits if not q]
+            if blockers:
+                ln = blockers[0]
+                add("RM_RF", rel, ln,
+                    lines[ln - 1] if ln - 1 < len(lines) else "",
+                    severity_cap="caution" if doc else None)
+            else:
+                ln = rm_hits[0][0]
+                add("RM_RF", rel, ln,
+                    lines[ln - 1] if ln - 1 < len(lines) else "",
+                    severity_cap="caution")
 
         # File-level: encoded payload + dynamic execution in the same file
         # (substring fallback; the AST class check above is the primary path).
@@ -8241,6 +10297,8 @@ def scan_folder(root: Path) -> ScanResult:
             _agent_config_findings(rel, path, text, lines, scan_lines,
                                    doc, add, comment_spans,
                                    string_spans)
+            _fixwave_findings(rel, path, lines, rule_lines, doc, add,
+                              suffix)
             if suffix in (".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"):
                 # Comment-blanked text: a fetch word in a comment is
                 # not fetch evidence (audit F5).

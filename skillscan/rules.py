@@ -133,7 +133,11 @@ RULES: list[Rule] = [
         "SSH_CREDENTIAL_READ", "block",
         "Reads SSH credential material (~/.ssh / private key files). A skill "
         "has no legitimate reason to read your SSH keys.",
-        r"(\.ssh\b|id_rsa|id_ed25519|id_ecdsa|id_dsa)",
+        # Dedicated matchers in scanner.py (fix wave): the rule fires
+        # only when a key-material path is consumed by a read
+        # operation — a bare path mention, an assignment, a chmod or
+        # a permission repair is not a read.
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
     ),
     _rule(
         "AGENT_CREDENTIAL_READ", "block",
@@ -194,10 +198,26 @@ RULES: list[Rule] = [
         "Sends data out over the network (HTTP POST/PUT, curl -d, a Request "
         "with a body). Combined with any local file access this is the "
         "classic exfiltration shape.",
+        # The curl/wget surface is NOT here: it is split by
+        # surface in scanner.py (fix waves 1-2, shell surface
+        # restored in wave 4). AST subprocess strings and shell
+        # files are judged by the statement tokeniser (full
+        # spec'd flag family, _nsd_shell_hit); shell files are
+        # judged on the joined logical (continuation-joined,
+        # variable-expanded) statement. Both require curl/wget
+        # in command position and a case-sensitive data flag
+        # among the command's own top-level option tokens.
+        # Code files (.py/.js/...) get
+        # the baseline line regex with only two repairs — the data
+        # flags match case-sensitively (the old IGNORECASE match
+        # read curl's receive-side `-D` as `-d`) and a flag inside
+        # a `$(...)` span does not count (mktemp's `-d`) — see
+        # _nsd_code_line_hit. Documentation files keep the old
+        # per-physical-line regex exactly (_NSD_DOC_LINE_RE): the
+        # tokeniser's joined-statement judging changed doc and
+        # code behaviour beyond the fixes' scope.
         r"((?<![\w.])(requests|httpx)\s*\.\s*(post|put|patch)\s*\(|"
-        r"\.post\s*\(\s*['\"]https?://|urlopen\s*\([^)]*data\s*=|"
-        r"curl[^\n]*\s(-d\b|--data\b|--data-binary\b|--post-data\b)|"
-        r"wget[^\n]*--post-data\b)",
+        r"\.post\s*\(\s*['\"]https?://|urlopen\s*\([^)]*data\s*=)",
     ),
     _rule(
         "SHELL_SUBPROCESS", "caution",
@@ -741,6 +761,6 @@ FILE_LEVEL_RULE_IDS = {
     "LURE_WITH_BYPASS", "TAINTED_SEND", "SECRET_FLOW", "TYPOSQUAT_SUSPECT",
     "AGENT_CONFIG_WRITE", "AGENT_CREDENTIAL_READ",
     "CLAIM_CONTRADICTED", "CLAIM_EXFIL_CONTRADICTION",
-    "INJECTION_EXECUTION",
+    "INJECTION_EXECUTION", "SSH_CREDENTIAL_READ",
 }
 LINE_RULES = [r for r in RULES if r.id not in FILE_LEVEL_RULE_IDS]

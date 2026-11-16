@@ -8,8 +8,10 @@ rules — v0.8.0's 63 plus the `INJECTION_EXECUTION` promotion).
 First run 2026-11-11 on v0.6.0; the v0.8.0 re-run gave every
 skill the same verdict as the v0.6 run (see "What changed from
 v0.6" below); the 2026-11-15 re-run moved 297 malicious skills
-from CAUTION to BLOCK and changed nothing else (see "What
-changed from v0.8.0" below).
+from CAUTION to BLOCK and changed nothing else, and a
+same-day fix wave then tightened three over-broad rules,
+setting the final figures below (see "What changed from
+v0.8.0" below).
 
 ## Corpus
 
@@ -45,8 +47,8 @@ subset of the malicious side.
 - SkillScan interacted with every sample by reading it as text only.
   Nothing was executed, installed, imported, or uploaded. The scanner
   produced zero errors across all 9,656 scans.
-- Median scan time in the 2026-11-15 run was ~100 ms per
-  malicious skill (p95 578 ms) and ~41 ms per benign skill
+- Median scan time in the 2026-11-15 run was ~106 ms per
+  malicious skill (p95 ~600 ms) and ~44 ms per benign skill
   (the v0.8.0 run measured ~110 ms / ~43 ms on the same
   harness — timings are machine-dependent; the verdicts are
   the result).
@@ -70,7 +72,7 @@ subset of the malicious side.
 
 | Set | n | BLOCK | CAUTION | PASS | Detection (BLOCK) | Detection (BLOCK+CAUTION) |
 |---|---|---|---|---|---|---|
-| Malicious | 7,421 | 3,696 | 2,421 | 1,304 | **49.8%** | **86.4%** |
+| Malicious | 7,421 | 3,689 | 2,427 | 1,305 | **49.7%** | **82.4%** |
 | Benign | 2,235 | 0 | 557 | 1,678 | false BLOCK **0%** | flagged 24.9% |
 
 What changed from v0.6, stated exactly: **nothing — at the
@@ -127,26 +129,42 @@ candidates were not shipped: each has a legitimate twin the
 scanner cannot tell apart at line level, and they stay at
 CAUTION deliberately.
 
+A same-day fix wave then tightened three rules to require
+the evidence their names claim (`SSH_CREDENTIAL_READ` must
+see an actual read of key material; `NETWORK_SEND_DATA`
+judges the tokenised statement, so `-D` no longer matches
+`-d` and another command's `-d` is not curl's; `RM_RF`
+demotes only provably own-created targets). Final effect on
+this corpus: 34 explained BLOCK losses against 27 gains
+(genuine multi-line curl sends the per-line pattern had
+missed) — BLOCK 3,696 → 3,689 — one mention-only skill
+dropping CAUTION → PASS, and benign CAUTIONs 557 → 551 with
+false BLOCKs still 0. On the internal code-bearing benign
+set the same wave moved BLOCK 52 → 38, the remainder being
+stated stances.
+
 ### Detection by attack family (membership basis)
 
 The BLOCK column is the 2026-11-15 run; BLOCK+CAUTION is
-unchanged from v0.8.0, because the promotion only moved
-skills that were already flagged.
+unchanged from v0.8.0 except for one mention-only skill the
+fix wave dropped from CAUTION to PASS (no-category row),
+because the promotion only moved skills that were already
+flagged.
 
 | Family | n | BLOCK | BLOCK+CAUTION |
 |---|---|---|---|
-| privilege_tool_authority_abuse | 1,004 | 78.9% | 99.4% |
+| privilege_tool_authority_abuse | 1,004 | 78.2% | 99.4% |
 | execution_code_delivery | 3,205 | 79.2% | 97.9% |
-| credential_access | 197 | 55.8% | 95.9% |
-| persistence_control | 249 | 55.8% | 90.0% |
-| instruction_goal_memory_manipulation | 1,560 | 69.7% | 86.2% |
+| credential_access | 197 | 54.3% | 95.9% |
+| persistence_control | 249 | 55.4% | 90.0% |
+| instruction_goal_memory_manipulation | 1,560 | 70.4% | 86.2% |
 | data_exfiltration_disclosure | 266 | 35.0% | 83.8% |
-| resource_availability_abuse | 330 | 41.8% | 90.3% |
-| dependency_supply_chain | 167 | 13.2% | 87.4% |
+| resource_availability_abuse | 330 | 41.5% | 90.3% |
+| dependency_supply_chain | 167 | 14.4% | 87.4% |
 | defense_evasion_obfuscation | 20 | 10.0% | 100% |
 | integrity_output_manipulation | 97 | 2.1% | 28.9% |
 | discovery_reconnaissance | 5 | 0.0% | 20.0% |
-| (no category assigned) | 2,591 | 27.1% | 67.6% |
+| (no category assigned) | 2,591 | 26.8% | 67.5% |
 
 Two membership figures need their honest footnotes:
 
@@ -167,10 +185,12 @@ Two membership figures need their honest footnotes:
   string literals, documentation examples) below block severity,
   the regression was fully reversed on the same benign set, and
   v0.5 holds at zero.
-- CAUTIONs: 557 (24.9%), unchanged from v0.6 (and up only 2 from
-  555, 24.8%, in v0.5 — the v0.6 addition was
-  `AGENT_CONFIG_WRITE` on 5 skills, 0.22%, all in prose at
-  caution severity). The only post-v0.6 rule to fire on the
+- CAUTIONs: 551 (24.7%). The count was 557 (24.9%) from v0.6
+  through the promotion run (up only 2 from 555, 24.8%, in
+  v0.5 — the v0.6 addition was `AGENT_CONFIG_WRITE` on 5
+  skills, 0.22%, all in prose at caution severity); the fix
+  wave's SSH prose gate then removed 6 mention-only
+  cautions. The only post-v0.6 rule to fire on the
   benign side is the claims check: `CLAIM_CONTRADICTED` on 16
   skills, every one already at CAUTION — no benign verdict
   changed in the v0.8.0 run, and none in the 2026-11-15 run
