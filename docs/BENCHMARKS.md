@@ -4,7 +4,8 @@ SkillScan's measured detection and false-positive rates on a public
 labelled corpus. These are SkillScan's own numbers, published as
 measured — including the families where the rates are poor. Last run:
 **2026-11-15**, scanner: the current tree (64 deterministic
-rules — v0.8.0's 63 plus the `INJECTION_EXECUTION` promotion).
+rules — v0.8.0's 63 plus the `INJECTION_EXECUTION` promotion;
+this run is the measurement basis for the v0.9.0 release).
 First run 2026-11-11 on v0.6.0; the v0.8.0 re-run gave every
 skill the same verdict as the v0.6 run (see "What changed from
 v0.6" below); the 2026-11-15 re-run moved 297 malicious skills
@@ -12,6 +13,20 @@ from CAUTION to BLOCK and changed nothing else, and a
 same-day fix wave then tightened three over-broad rules,
 setting the final figures below (see "What changed from
 v0.8.0" below).
+
+## v0.9.0 release note
+
+v0.9.0 (2026-11-15) is measured by the 2026-11-15 fix-wave run
+recorded in this document — that run, not a new one, is the
+release's measurement basis. The release changes version strings
+and documentation only over the measured tree; before the release
+was prepared, the tree was re-verified against the run: the benign
+side in full (2,235 folders: 0 BLOCK / 551 CAUTION / 1,684 PASS,
+zero per-folder differences), the internal code-bearing benign
+set in full (392 members: 49 BLOCK / 286 CAUTION / 57 PASS, zero
+per-member differences against their recorded baselines), and a
+501-folder stratified sample of the malicious side (zero verdict
+differences).
 
 ## Corpus
 
@@ -73,7 +88,7 @@ subset of the malicious side.
 | Set | n | BLOCK | CAUTION | PASS | Detection (BLOCK) | Detection (BLOCK+CAUTION) |
 |---|---|---|---|---|---|---|
 | Malicious | 7,421 | 3,689 | 2,427 | 1,305 | **49.7%** | **82.4%** |
-| Benign | 2,235 | 0 | 557 | 1,678 | false BLOCK **0%** | flagged 24.9% |
+| Benign | 2,235 | 0 | 551 | 1,684 | false BLOCK **0%** | flagged 24.7% |
 
 What changed from v0.6, stated exactly: **nothing — at the
 verdict level.** All 9,656 skills received the identical verdict
@@ -200,8 +215,8 @@ Two membership figures need their honest footnotes:
 
 ## Limitations
 
-- **Most misses are prose-only skills.** Of the 1,304 malicious
-  skills that PASSed, 886 are a single `SKILL.md` with no code:
+- **Most misses are prose-only skills.** Of the 1,305 malicious
+  skills that PASSed, 887 are a single `SKILL.md` with no code:
   install lures pointing at external archives, pure instruction/goal
   manipulation, and output manipulation. A deterministic folder
   scanner sees behaviour shapes in code and text mechanics; it does

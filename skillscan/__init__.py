@@ -1,6 +1,6 @@
 """SkillScan — scan an AI-agent skill or MCP server before you install it."""
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 from .combine import SetResult, scan_set
 from .scanner import Finding, ScanResult, scan_folder

@@ -6,6 +6,8 @@ suites and an adversarial review before it was pushed.
 
 ## Unreleased
 
+## v0.9.0 — 2026-11-15
+
 - **False-BLOCK fix wave (no rule-count change).** Three
   rules now require the evidence their names claim:
   `SSH_CREDENTIAL_READ` fires only when key material is
@@ -89,8 +91,53 @@ suites and an adversarial review before it was pushed.
 - **pre-commit hook.** `.pre-commit-hooks.yaml` ships the scanner as
   a pre-commit hook (id `skillscan`, scans the repo root).
 - **Docs.** The GitHub Action example in `docs/TOOLCHAIN.md` now pins
-  the current release (v0.8.0; was v0.5.0), and the README's Toolchain
+  the current release (v0.9.0; was v0.5.0), and the README's Toolchain
   section shows the copy-paste `uses:` block.
+- **Benchmark refresh, and a correction (2026-11-15).** The
+  pinned MaliciousSkillBench corpus was re-run for this
+  release: malicious BLOCK 49.7% (3,689), CAUTION 2,427,
+  PASS 1,305; benign false BLOCKs 0, CAUTION 551. An earlier
+  version of the benchmark text stated BLOCK+CAUTION as
+  86.4% (6,414); that figure was wrong — a promotion moves
+  skills *within* BLOCK+CAUTION, so the combined figure was
+  82.4% (6,117) after the promotion, unchanged in substance
+  from v0.8.0, and is 82.4% (6,116) after the fix wave. The
+  README and `docs/BENCHMARKS.md` carry the corrected
+  figure.
+- **Priced and parked: the broad pairs and the shell-string
+  narrowing (no code shipped).** The broad capability pairs
+  (`NETWORK_ACCESS` + `SHELL_SUBPROCESS`,
+  `CHMOD_CHOWN` + `SHELL_SUBPROCESS`) were priced against
+  the held-out half of a new frozen internal benign set —
+  344 hand-written benign skills with real code, built
+  because the public corpus's benign side is prose-only and
+  its zero was structural. The pairs trip 8 and 9 held-out
+  honest tools respectively and stay at CAUTION. A
+  shell-string narrowing (execution as a shell string, not
+  an argv list) priced clean on every available corpus and
+  was built and measured (+147 CAUTION → BLOCK), then
+  parked after adversarial review built honest
+  shell-string users — build runners, media tools,
+  git-hook installers, localhost test harnesses — that it
+  blocked wholesale. A 48-member supplement of those
+  archetypes was added to the benign set (392 members in
+  all; the full set now stands at 49 BLOCK / 286 CAUTION /
+  57 PASS, every BLOCK a stated stance) so the blind spot
+  is priced in from the start next time.
+- **Scoped and parked: cross-file dataflow (no code
+  shipped).** A census of all 239 code-bearing malicious
+  skills that PASS found the chain halves absent, not
+  unjoined (209 folders carry no relevant half; no folder
+  pairs complementary halves at any scope), for an honest
+  yield of 0 (range 0–1). It is revisited only if a future
+  census first measures a real split-chain population.
+- **Known JS-surface items (no code shipped).** A bare JS
+  `spawn()` call produces no `SHELL_SUBPROCESS` finding
+  (coverage gap), and the `SHELL_OS_SYSTEM` line rule can
+  match `os.system(` inside a JS string literal — a
+  pre-existing false BLOCK found by the shell-string
+  review. Both are recorded in the README's "What remains
+  open" block for a future fix wave.
 
 ## Measurement follow-up — 2026-11-14
 

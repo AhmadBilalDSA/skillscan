@@ -365,21 +365,87 @@ offline-mode numbers and do not change.
   stays labelled unmeasured above, and the choice of default
   model stays open. Gemini's picture is complete: measured on
   both sets, 0 false BLOCKs, 0 added CAUTIONs.
-- **The feature programme shipped in v0.8.0.** All five
-  differentiators are in this release: the claims check
-  (landed in v0.7.1 — the scanner checks what a skill's
-  SKILL.md claims about itself against what the scan found),
-  MCP tool-description scanning (manifest descriptions are
-  checked for poisoning and steering, and join the `--llm`
-  lane as a labelled surface), the change watch (`--pin` /
-  `--check-pin`: fingerprint a folder, later diff it — the
-  rug-pull guard), the combination scan (`--combine`: a
-  folder of skills judged as a set, with cross-skill
-  capability pairs reported), and exceptions with reasons
-  (`--exceptions`: findings a project accepts stay visible
-  but leave the verdict, each with a reason and an expiry).
-  Each item landed only after the full test suites and an
-  adversarial review pass.
+- **The promotion programme is concluded: one of eight
+  measured combinations shipped.** Eight CAUTION combinations
+  were measured as candidate promotions to BLOCK. Only
+  `INJECTION_EXECUTION` (temp-path kind) had no legitimate
+  twin across three adversarial review rounds; the other
+  seven are parked with their reasons recorded under Known
+  limits below.
+- **The broad capability pairs are priced and closed.** The
+  two pairs the promotion programme left unpriced —
+  `NETWORK_ACCESS` + `SHELL_SUBPROCESS` and `CHMOD_CHOWN` +
+  `SHELL_SUBPROCESS` — were priced against the held-out half
+  of the code-bearing benign set: they trip 8 and 9 held-out
+  honest tools respectively (checksum-verified installers,
+  permission fixers, freshness reporters — the canonical
+  shapes of legitimate local tools), so they stay at CAUTION
+  permanently. Narrowing by same file or code surface trips
+  the same twins.
+- **The shell-string narrowing is built, measured — and
+  parked.** Requiring the execution half to be a shell string
+  (`shell=True`, `os.system`, `sh -c`, JS `exec(` — not an
+  argv list) priced clean on every corpus available (zero
+  trips on the benign-code set and the prose corpus) and
+  measured +147 malicious CAUTION → BLOCK, dead centre on
+  its priced band. An independent adversarial review then
+  built honest shell-string users the pricing corpora did
+  not contain — build runners, an ffmpeg media tool, a
+  git-hook installer, localhost test harnesses, an rsync
+  backup — and the promotion blocked them wholesale: the
+  mainstream honest population uses shell strings too, and
+  no line-level separator exists. It does not ship. A
+  48-member supplement of shell-string-user archetypes was
+  added to the benign-code set so this blind spot is priced
+  in from the start next time.
+- **Cross-file dataflow is scoped and parked.** The
+  remaining mechanical pool was 239 code-bearing malicious
+  skills that PASS. A census of all 239 found the chain
+  halves are not unjoined — they are absent: 209 folders
+  carry no detection-relevant half at all, and no folder
+  pairs complementary halves at any scope (zero downloads,
+  zero credential-store reads, zero persistence writes in
+  the pool's code). Honest yield is 0 (range 0–1 folders),
+  and the false-positive risk is unpriceable today because
+  the benign-code set has no multi-code-file members.
+  Parked, not open: it is revisited only if a future census
+  over a different pool first measures a real split-chain
+  population. The PASS pool's signal is prose and
+  instruction content, which is the LLM lane's territory.
+- **A code-bearing benign set now exists, and it found real
+  false BLOCKs — three defect groups are now fixed.** The
+  corpus below ships benign skills as prose only, so a
+  frozen internal set of hand-written benign skills with
+  real code was built to test the other side (344 members,
+  plus the 48-member shell-string supplement above: 392 in
+  all). The scanner initially BLOCKed 52 of the original
+  344, every one fully disclosed in its own SKILL.md. Three
+  groups were defects in the rules — an SSH permission
+  fixer blocked for "reading" keys it only chmods, plain
+  curl downloads blocked as "sending data", a skill's own
+  temp-folder cleanup blocked as destructive deletion — and
+  the 2026-11-15 fix wave corrected all three (see "What
+  the fix wave changed" below). The full set now stands at
+  49 BLOCK / 286 CAUTION / 57 PASS: the 38 remaining
+  original BLOCKs are stated stances, not defects (any
+  persistence install blocks, disclosed or not — 22; and
+  uploads to the user's own cloud still match the
+  exfiltration shape — 16; the claims check is the tool for
+  the second), and the supplement's 11 BLOCKs are likewise
+  pre-existing stances (5 via `SHELL_OS_SYSTEM` — `os.system`
+  blocks by design — and 6 via `EVAL_EXEC` on JS `exec(`).
+  The zero-false-BLOCK figure below remains exact for the
+  corpus it names; this set is the wider truth, stated here
+  rather than smoothed over.
+- **Two JS-surface items are known and queued.** A bare JS
+  `spawn()` call produces no `SHELL_SUBPROCESS` finding
+  (only `spawnSync` / `execSync` / `child_process.` forms are
+  matched) — a coverage gap. And the `SHELL_OS_SYSTEM` line
+  rule can match the text `os.system(` inside a JS string
+  literal, a pre-existing false BLOCK on the JS surface
+  found by the shell-string review. Both are recorded for a
+  future fix wave; neither is silently widened or narrowed
+  in the meantime.
 - **The LLM-lane signal tests are concluded; neither
   technique shipped.** HTML-comment surfacing showed no signal
   and is closed. A purpose-consistency second pass showed a
@@ -389,37 +455,6 @@ offline-mode numbers and do not change.
   shipped. The shipped `--llm` mode is unchanged; a future
   attempt needs a way to keep simpler models off the honest
   lookalike cases.
-- **The promotion programme is concluded: one of eight
-  measured combinations shipped.** Eight CAUTION combinations
-  were measured as candidate promotions to BLOCK. Only
-  `INJECTION_EXECUTION` (temp-path kind) had no legitimate
-  twin across three adversarial review rounds; the other
-  seven are parked with their reasons recorded under Known
-  limits below. The remaining road, in order: price the
-  broad capability pairs (network + subprocess and friends)
-  against the benign-code set's held-out half; and
-  cross-file dataflow for code-bearing skills that
-  currently pass.
-- **A code-bearing benign set now exists, and it found real
-  false BLOCKs — three defect groups are now fixed.** The
-  corpus below ships benign skills as prose only, so a
-  frozen internal set of 344 hand-written benign skills with
-  real code was built to test the other side. The scanner
-  initially BLOCKed 52 of the 344, every one fully disclosed
-  in its own SKILL.md. Three groups were defects in the
-  rules — an SSH permission fixer blocked for "reading" keys
-  it only chmods, plain curl downloads blocked as "sending
-  data", a skill's own temp-folder cleanup blocked as
-  destructive deletion — and the 2026-11-15 fix wave
-  corrected all three (see "What the fix wave changed"
-  below): the set now BLOCKs 38, and every one of the 38 is
-  a stated stance, not a defect: any persistence install
-  blocks, disclosed or not (22), and uploads to the user's
-  own cloud still match the exfiltration shape (16) — the
-  claims check is the tool for the second. The
-  zero-false-BLOCK figure below remains exact for the corpus
-  it names; this set is the wider truth, stated here rather
-  than smoothed over.
 - **The deterministic coverage programme continues.** v0.7.1
   extended ERROR_INFO_LEAK to JavaScript/TypeScript; the
   remaining documented gaps live in
@@ -435,7 +470,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
   `verdict` / `exit-code` outputs) runs SkillScan in CI:
 
   ```yaml
-  - uses: RakTikoo/skillscan@v0.8.0
+  - uses: RakTikoo/skillscan@v0.9.0
     with:
       path: ./skills/my-skill        # folder to scan
       fail-on-block: "true"          # default: BLOCK fails the job
@@ -564,7 +599,11 @@ challenges it, by design of static analysis:
   routes) can still slip through.
 - **Multi-file dataflow** is shallow: a credential read in one file and
   a send in another are combined at skill level (`EXFIL_COMBINATION`),
-  but value-level taint tracking across files is not done.
+  but value-level taint tracking across files is not done. A dedicated
+  scoping of the 239 code-bearing skills that currently PASS found no
+  split chains to join — the halves are absent, not unjoined — so a
+  cross-file dataflow engine is parked, not planned (see "What
+  remains open").
 - **CAUTION is noisy by design** for capability flags: a backup tool
   *should* be flagged for subprocess + deletion, a weather skill for
   network + an env API key. `expanduser()` on a user-supplied path is
@@ -580,7 +619,15 @@ challenges it, by design of static analysis:
   destination as their job), and concealment plus execution
   (user-data decoders, shipped sample blobs and PEM material
   look like payload decoding; hidden protective instructions
-  are agent-addressed by design). Correctness over coverage:
+  are agent-addressed by design). The broad capability
+  pairs (network + subprocess, chmod + subprocess) were
+  priced against code-bearing benign skills and trip
+  mainstream honest tools (checksum-verified installers,
+  permission fixers), and a shell-string narrowing of those
+  pairs — built and measured at +147 — was parked after
+  adversarial review built honest shell-string users
+  (build runners, media tools, test harnesses) that it
+  blocked wholesale. Correctness over coverage:
   a combination is promoted only when it is a completed chain
   with no mainstream benign twin — currently that is only the
   temp-path `INJECTION_EXECUTION` shape above.
@@ -810,8 +857,8 @@ already at that verdict or higher:
 
 Honest limits, stated plainly:
 
-- **Most misses are prose-only skills.** 1,304 malicious
-  skills still PASS; 886 of them are a single `SKILL.md` with
+- **Most misses are prose-only skills.** 1,305 malicious
+  skills still PASS; 887 of them are a single `SKILL.md` with
   no code at all. Among *pure* instruction-manipulation skills
   the BLOCK rate is 8.8%, and pure output manipulation is ~2%
   — deterministic rules see behaviour shapes, not meaning.
@@ -835,10 +882,9 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2026 RakTikoo.
 
 ## Status
 
-Current release: **v0.8.0** (2026-11-14). Main has since
-gained the `INJECTION_EXECUTION` promotion (64 rules) and
-the false-BLOCK fix wave — see the Unreleased section of
-the CHANGELOG; the next release will carry both. SkillScan began as a
+Current release: **v0.9.0** (2026-11-15). It carries the
+`INJECTION_EXECUTION` promotion (64 rules) and the
+false-BLOCK fix wave on top of v0.8.0 — see the CHANGELOG. SkillScan began as a
 Week 1 spike; every version since has passed the full test
 suites and an independent adversarial review before it was
 pushed. The short history: v0.1–v0.2 built the deterministic
@@ -864,7 +910,14 @@ deterministic rules), the change watch (`--pin` /
 `--check-pin`), the combination scan (`--combine`), and
 exceptions with reasons (`--exceptions`) — each reviewed
 adversarially before it landed, with its state tracked in
-the "What remains open" block above. Expect false positives and false negatives; the
+the "What remains open" block above. v0.9.0 added the one
+promotion that survived measurement (`INJECTION_EXECUTION`,
+temp-path kind; 64 rules) and the false-BLOCK fix wave that
+tightened three over-broad rules to require the evidence
+their names claim; the measured combinations that did not
+survive — the broad capability pairs, the shell-string
+narrowing, cross-file dataflow — are recorded as parked,
+with their reasons, in the same block. Expect false positives and false negatives; the
 rule set and corpus are a starting point, not a finished
 product. Issues and new evasion samples are welcome — a
 mutation that evades SkillScan is a valuable contribution.
