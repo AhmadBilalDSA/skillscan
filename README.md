@@ -17,6 +17,8 @@ findings on top — it can never remove or change them; see
 SkillScan is free and open source (MIT). There is no hosted tier and no
 paid version — the whole tool lives in this repository.
 
+**First contribution?** Start with a [good first issue](https://github.com/RakTikoo/skillscan/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+
 ## Example
 
 ```console
