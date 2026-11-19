@@ -22,22 +22,22 @@ patterns were found in what was scanned, not that a skill is safe.
 pip install git+https://github.com/RakTikoo/skillscan
 ```
 
-This provides the `skillscan` command. (The `skillscan` name on PyPI is
-a different tool by another author — use the GitHub route.)
+This provides the `skillscan` command. Prefer a virtual environment
+for the install. (The `skillscan` name on PyPI is a different tool
+by another author — use the GitHub route.)
 
 ## Run
 
-Scan a skill folder before installing it:
+Scan a skill folder before installing it, or get a machine-readable
+report for tooling:
 
 ```bash
 skillscan path/to/skill-folder
-```
-
-Machine-readable report, for tooling:
-
-```bash
 skillscan path/to/skill-folder --format json
 ```
+
+The repo bundles sample skills under `samples/` — `good/`, `caution/`
+and `bad/` (e.g. `samples/bad/ssh-stealer`); scan one to see a verdict.
 
 Other formats: `--format md` and `--format sarif`. A GitHub repo URL
 can be scanned directly. An optional `--llm` review can add findings
