@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkillScan by RakTikoo — scan AI agent skills before you install them</title>
+<meta name="description" content="SkillScan by RakTikoo is a free, offline scanner that reads an AI agent skill or MCP server folder before you install it and gives one plain-English verdict: BLOCK, CAUTION, or PASS.">
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; color: #1a1a1a; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.7rem; line-height: 1.25; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; }
+  code { background: #f0f0f0; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
+  pre { background: #f6f6f6; padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 0.35rem 0.7rem; text-align: left; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size: 0.9rem; color: #555; }
+  a { color: #0b5cad; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "SkillScan by RakTikoo",
+  "applicationCategory": "SecurityApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "sameAs": "https://github.com/RakTikoo/skillscan"
+}
+</script>
+</head>
+<body>
+
+<h1>SkillScan by RakTikoo</h1>
+
+<p><strong>Scan an AI agent skill or MCP server before you install it.</strong></p>
+
+<p>AI-agent skills and MCP servers run on your machine, with your agent's
+permissions — your files, your accounts, your keys. SkillScan reads a skill
+folder <em>before</em> you install it and gives you one plain-English verdict —
+<strong>BLOCK</strong>, <strong>CAUTION</strong>, or <strong>PASS</strong> —
+from deterministic rules.</p>
+
+<p>By default no LLM is involved and nothing leaves your machine: the same
+folder always gets the same answer, and every finding points at the exact
+rule, file, and line. Scanned code is never executed — files are only read
+and parsed. An optional LLM review mode (<code>--llm</code>, off by default)
+can <em>add</em> findings on top; it can never remove or change the offline
+ones.</p>
+
+<p>Other projects share the name SkillScan. This one is RakTikoo's, and the
+<code>skillscan</code> name on PyPI belongs to a different tool by another
+author — please use the GitHub routes below.</p>
+
+<h2>The verdicts</h2>
+
+<table>
+  <tr><th>Exit code</th><th>Verdict</th><th>Meaning</th></tr>
+  <tr><td>0</td><td>PASS</td><td>No known-bad patterns were found in what was scanned.</td></tr>
+  <tr><td>1</td><td>CAUTION</td><td>Something worth a human read before installing.</td></tr>
+  <tr><td>2</td><td>BLOCK</td><td>At least one block-severity pattern was found.</td></tr>
+  <tr><td>3</td><td>—</td><td>Usage / IO error: the scanner could not run (bad path, bad flags). Deliberately distinct from BLOCK.</td></tr>
+</table>
+
+<p>The exit codes make SkillScan usable as a CI / install-time gate.</p>
+
+<h2>Install</h2>
+
+<p>SkillScan is pure Python 3 standard library, with zero dependencies
+(Python 3.10+). Install it as a command with pip, straight from GitHub:</p>
+
+<pre><code>pip install git+https://github.com/RakTikoo/skillscan
+skillscan &lt;path-to-skill-folder&gt;</code></pre>
+
+<p>With pipx (isolated) or uv:</p>
+
+<pre><code>pipx install git+https://github.com/RakTikoo/skillscan
+uv tool install git+https://github.com/RakTikoo/skillscan</code></pre>
+
+<p>From the release wheel (no git needed):</p>
+
+<pre><code>pip install https://github.com/RakTikoo/skillscan/releases/download/v0.9.0/skillscan-0.9.0-py3-none-any.whl</code></pre>
+
+<p>Checksums for the release files are in the <code>SHA256SUMS</code> file
+attached to the v0.9.0 release.</p>
+
+<p>With Homebrew (macOS/Linux):</p>
+
+<pre><code>brew tap RakTikoo/tools
+brew install RakTikoo/tools/skillscan</code></pre>
+
+<p>With Scoop (Windows):</p>
+
+<pre><code>scoop bucket add RakTikoo https://github.com/RakTikoo/scoop-bucket
+scoop install skillscan</code></pre>
+
+<p>Or clone the repo and run it in place:</p>
+
+<pre><code>git clone https://github.com/RakTikoo/skillscan
+cd skillscan
+python3 -m skillscan &lt;path-to-skill-folder&gt;</code></pre>
+
+<h2>Guides</h2>
+
+<ul>
+  <li><a href="check-a-skill.html">How to check if an agent skill is safe before installing</a> — the scan, the verdicts, and what to do with each one.</li>
+  <li><a href="skill-changed.html">Did this skill change since I installed it?</a> — fingerprint a skill with <code>--pin</code>, then check it later with <code>--check-pin</code>.</li>
+  <li><a href="numbers.html">Measured results</a> — SkillScan's own published detection and false-block numbers, with the misses left in.</li>
+</ul>
+
+<h2>What this is not</h2>
+
+<p>SkillScan is a <strong>linter, not a guarantee of safety</strong>.</p>
+
+<ul>
+  <li>A <strong>PASS</strong> means "no known-bad patterns were found in the files that were scanned" — not "this skill is safe".</li>
+  <li>A <strong>BLOCK</strong> means a pattern strongly associated with malicious skills was found — read the finding before judging; context matters.</li>
+  <li>SkillScan does not run the skill, does not sandbox anything, and does not replace reading the code of anything you install with broad permissions.</li>
+</ul>
+
+<p>Known limits, kept honest:</p>
+
+<ul>
+  <li><strong>Runtime behaviour is invisible.</strong> Code that decides what to do from a server response, the date, or an encrypted config can look clean.</li>
+  <li><strong>Strong encryption / packing</strong> of a payload (beyond base64/hex) is flagged at most as obfuscation, not decoded.</li>
+  <li><strong>JS/TS is regex + string-squeezing, not a full AST</strong> — deeply dynamic JS can still slip through.</li>
+  <li><strong>Multi-file dataflow is shallow:</strong> a credential read in one file and a send in another are combined at skill level, but value-level taint tracking across files is not done.</li>
+  <li><strong>CAUTION is noisy by design</strong> for capability flags: a backup tool <em>should</em> be flagged for subprocess + deletion, a weather skill for network + an env API key.</li>
+  <li><strong>Scan budgets are finite.</strong> A scan stops after 2,000 files or 32 MB of content (per-file cap 2 MB). Hitting a budget is reported and forces a CAUTION — never a silent PASS.</li>
+  <li><strong>Concealment and phrase checks are mechanics, not meaning.</strong> They detect invisible characters, hidden elements, and fixed phrase lists; a novel phrasing or a purely semantic deception still passes.</li>
+</ul>
+
+<p>Full details, the rule table, and the complete known-limits list are in the
+<a href="https://github.com/RakTikoo/skillscan">GitHub repository</a>.</p>
+
+<footer>
+  <p><a href="https://github.com/RakTikoo/skillscan">SkillScan by RakTikoo</a> — free and open source (MIT)</p>
+</footer>
+
+</body>
+</html>

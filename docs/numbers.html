@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Measured results — SkillScan by RakTikoo</title>
+<meta name="description" content="SkillScan's own measured detection and false-block rates on the public MaliciousSkillBench corpus, run 2026-11-15: 49.7% of malicious skills blocked, zero false blocks on 2,235 benign skills — and the misses, published alongside.">
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; color: #1a1a1a; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.7rem; line-height: 1.25; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; }
+  code { background: #f0f0f0; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
+  pre { background: #f6f6f6; padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 0.35rem 0.7rem; text-align: left; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size: 0.9rem; color: #555; }
+  a { color: #0b5cad; }
+</style>
+</head>
+<body>
+
+<h1>Measured results</h1>
+
+<p>These are SkillScan's own numbers, published as measured — including
+the families where the rates are poor. They come from the project's
+<a href="https://github.com/RakTikoo/skillscan">README</a>; the full
+methodology, counting rules and caveats are in the repo's
+<a href="https://github.com/RakTikoo/skillscan/blob/main/docs/BENCHMARKS.md">benchmark document</a>.</p>
+
+<h2>The corpus and the run</h2>
+
+<p>The corpus is <strong>MaliciousSkillBench</strong> — 9,740 labelled
+skills: 7,505 malicious, 2,235 benign. First run 2026-11-11 with
+SkillScan v0.6.0; re-run <strong>2026-11-15</strong> with the current
+tree (64 deterministic rules) — the figures below are that run, made
+with the deterministic offline mode only (no <code>--llm</code>).
+Malicious skills were scanned as complete extracted folders; benign
+skills are shipped by the benchmark as frozen text, so each was scanned
+as a single <code>SKILL.md</code> folder. Nothing was executed — folders
+were read as text only.</p>
+
+<table>
+  <tr><th>Set</th><th>Skills</th><th>BLOCK</th><th>CAUTION</th><th>PASS</th></tr>
+  <tr><td>Malicious</td><td>7,421</td><td><strong>49.7%</strong> (3,689)</td><td>32.7% (2,427)</td><td>17.6% (1,305)</td></tr>
+  <tr><td>Benign</td><td>2,235</td><td>0% false BLOCKs (0)</td><td>24.7% (551)</td><td>75.3% (1,684)</td></tr>
+</table>
+
+<p>Detection at BLOCK+CAUTION (flagged at any severity): <strong>82.4%</strong>
+(6,116 of 7,421) of malicious skills; 24.7% of benign skills were flagged
+at any severity, all as CAUTION. Median scan time was ~106 ms per
+malicious skill (p95 ~600 ms) and ~44 ms per benign skill.</p>
+
+<h2>Detection by attack family</h2>
+
+<p>Multi-label membership; BLOCK / BLOCK+CAUTION, from the 2026-11-15 run.
+The weak families are left in:</p>
+
+<table>
+  <tr><th>Family</th><th>Skills</th><th>BLOCK</th><th>BLOCK+CAUTION</th></tr>
+  <tr><td>Privilege / tool-authority abuse</td><td>1,004</td><td>78.2%</td><td>99.4%</td></tr>
+  <tr><td>Execution / code delivery</td><td>3,205</td><td>79.2%</td><td>97.9%</td></tr>
+  <tr><td>Credential access</td><td>197</td><td>54.3%</td><td>95.9%</td></tr>
+  <tr><td>Persistence / control</td><td>249</td><td>55.4%</td><td>90.0%</td></tr>
+  <tr><td>Instruction / goal manipulation</td><td>1,560</td><td>70.4%</td><td>86.2%</td></tr>
+  <tr><td>Data exfiltration / disclosure</td><td>266</td><td>35.0%</td><td>83.8%</td></tr>
+  <tr><td>Resource / availability abuse</td><td>330</td><td>41.5%</td><td>90.3%</td></tr>
+  <tr><td>Dependency / supply chain</td><td>167</td><td>14.4%</td><td>87.4%</td></tr>
+  <tr><td>Defense evasion / obfuscation</td><td>20</td><td>10.0%</td><td>100%</td></tr>
+  <tr><td>Integrity / output manipulation</td><td>97</td><td>2.1%</td><td>28.9%</td></tr>
+  <tr><td>Discovery / reconnaissance</td><td>5</td><td>0.0%</td><td>20.0%</td></tr>
+  <tr><td>(No category assigned)</td><td>2,591</td><td>26.8%</td><td>67.5%</td></tr>
+</table>
+
+<h2>What moved in the 2026-11-15 run</h2>
+
+<p>One change moved the numbers: the <code>INJECTION_EXECUTION</code>
+promotion. 297 malicious skills moved from CAUTION to BLOCK — every one
+a completed staging chain (a file written to a fixed temp path and tied
+to execution in the same file). That took BLOCK from 45.8% to 49.8% at
+zero measured false-BLOCK cost on either benign corpus.</p>
+
+<p>The same day, a fix wave tightened three over-broad rules to require
+the evidence their names claim. The trade was 34 explained BLOCK losses
+against 27 gains — net BLOCK 3,696 → 3,689 (49.7%), and benign CAUTIONs
+557 → 551. Correctness over coverage: a headline rate bought with other
+people's false alarms is not a rate worth printing.</p>
+
+<h2>What was measured and refused</h2>
+
+<p>Eight CAUTION combinations were measured as candidate promotions to
+BLOCK. Only one shipped. The other seven were <strong>not</strong>
+promoted — each has a legitimate twin the scanner cannot tell apart at
+line level. Two examples, priced and closed:</p>
+
+<ul>
+  <li>The broad capability pairs (network access + subprocess; chmod + subprocess) were priced against code-bearing benign skills: they trip 8 and 9 held-out honest tools respectively — checksum-verified installers, permission fixers, freshness reporters — so they stay at CAUTION permanently.</li>
+  <li>A shell-string narrowing of those pairs was built and measured at +147 malicious CAUTION → BLOCK, then parked after adversarial review built honest shell-string users (build runners, an ffmpeg media tool, a git-hook installer, localhost test harnesses, an rsync backup) that it blocked wholesale. It does not ship.</li>
+</ul>
+
+<p>Cross-file dataflow was scoped the same way: a census of the 239
+code-bearing malicious skills that PASS found the chain halves absent,
+not unjoined — honest yield 0 — so the engine is parked, not planned.</p>
+
+<h2>The misses, stated plainly</h2>
+
+<ul>
+  <li><strong>Most misses are prose-only skills.</strong> 1,305 malicious skills still PASS; 887 of them are a single <code>SKILL.md</code> with no code at all. Among <em>pure</em> instruction-manipulation skills the BLOCK rate is 8.8%, and pure output manipulation is ~2% — deterministic rules see behaviour shapes, not meaning.</li>
+  <li><strong>The benign side is prose-only</strong> (see above), so the false-BLOCK figure measures prose-triggered false alarms, not code-triggered ones. That asymmetry is part of the corpus, and it is disclosed rather than smoothed over.</li>
+  <li>Against 25 techniques from four published audits of real malicious skills and MCP servers, the repo's coverage map counts <strong>4 covered, 13 partial, 8 gap</strong>. SkillScan is strong on the code-shaped half of those audits and weak on the language-shaped half — several of which no static folder scanner can see.</li>
+</ul>
+
+<h2>The wider truth on false blocks</h2>
+
+<p>The zero-false-BLOCK figure above is exact for the corpus it names.
+Because that corpus ships benign skills as prose only, a second,
+code-bearing benign set was built: 392 hand-written benign skills with
+real code. There the scanner stands at 49 BLOCK / 286 CAUTION / 57 PASS.
+Every remaining BLOCK is a stated stance, not a defect — any persistence
+install blocks, disclosed or not (22), and uploads to the user's own
+cloud still match the exfiltration shape (16). Three defect groups the
+set exposed (an SSH permission fixer, plain curl downloads, a skill's
+own temp-folder cleanup) were fixed in the 2026-11-15 fix wave.</p>
+
+<h2>The optional LLM mode, measured so far</h2>
+
+<p>The deterministic figures above do not change with <code>--llm</code>;
+the README's Modes section reports the live-model measurements
+separately. On the benchmark's output-manipulation family, a
+current-model judge lifts BLOCK+CAUTION from 28.9% to 54.6% with zero
+false BLOCKs on 280 benign skills. Weak free-tier judges lift the
+held-out malicious set materially (Gemini Flash-Lite 37.0% → 53.4%; the
+default Qwen 34.1% → 43.2%). Gemini Flash-Lite also reviewed 258 of 259
+held-out benign skills with 0 false BLOCKs and 0 added CAUTIONs. The
+default Qwen's benign-set run was stopped by its free-tier limit after
+2 calls, so that preset's benign rate at corpus scale remains
+unmeasured — the README labels it that way, and so does this page.</p>
+
+<footer>
+  <p><a href="https://github.com/RakTikoo/skillscan">SkillScan by RakTikoo</a> — free and open source (MIT)</p>
+</footer>
+
+</body>
+</html>

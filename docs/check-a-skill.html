@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to check if an agent skill is safe before installing — SkillScan by RakTikoo</title>
+<meta name="description" content="A short procedure for checking an AI agent skill or MCP server before you install it, using SkillScan by RakTikoo: install the scanner, scan the folder, read one plain-English verdict.">
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; color: #1a1a1a; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.7rem; line-height: 1.25; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; }
+  code { background: #f0f0f0; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
+  pre { background: #f6f6f6; padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 0.35rem 0.7rem; text-align: left; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size: 0.9rem; color: #555; }
+  a { color: #0b5cad; }
+</style>
+</head>
+<body>
+
+<h1>How to check if an agent skill is safe before installing</h1>
+
+<p>An AI-agent skill runs on your machine with your agent's permissions, so
+the time to look at it is <em>before</em> it is installed. This page is the
+procedure, with <a href="https://github.com/RakTikoo/skillscan">SkillScan by
+RakTikoo</a> as the worked example: install the scanner once, scan the skill
+folder, and read one plain-English verdict. The scan is offline and
+deterministic — nothing leaves your machine, the scanned code is never
+executed, and the same folder always gets the same answer.</p>
+
+<h2>1. Install the scanner</h2>
+
+<pre><code>pip install git+https://github.com/RakTikoo/skillscan</code></pre>
+
+<p>(Python 3.10+, zero dependencies. Please use the GitHub route: the
+<code>skillscan</code> name on PyPI belongs to a different tool by another
+author. Other routes — pipx, uv, a release wheel, Homebrew, Scoop — are on
+the <a href="index.html">index page</a>.)</p>
+
+<h2>2. Scan the skill folder</h2>
+
+<p>Point the scanner at the folder you are thinking of installing:</p>
+
+<pre><code>skillscan &lt;path-to-skill-folder&gt;</code></pre>
+
+<p>You can also scan a GitHub repo directly — SkillScan shallow-clones it
+into a temp dir, scans it, and deletes the clone:</p>
+
+<pre><code>skillscan https://github.com/&lt;owner&gt;/&lt;repo&gt;</code></pre>
+
+<p>SkillScan walks the folder and scans every regular file that decodes as
+text, whatever its extension. Every report states how many files were
+scanned and which were skipped; if anything suspicious was skipped — or
+nothing was scanned at all — the verdict cannot be a clean PASS.</p>
+
+<h2>3. Read the verdict</h2>
+
+<p>A scan of a clean skill ends like this:</p>
+
+<pre><code>No known-bad patterns found.
+
+VERDICT: PASS</code></pre>
+
+<p>A scan of a skill that reads your SSH keys and sends data out over the
+network ends with findings that name the rule, the file, and the line —
+for example <code>SSH_CREDENTIAL_READ</code> and
+<code>EXFIL_COMBINATION</code> — and:</p>
+
+<pre><code>VERDICT: BLOCK</code></pre>
+
+<p>The three verdicts, and what to do with each:</p>
+
+<table>
+  <tr><th>Verdict</th><th>Exit code</th><th>Meaning</th></tr>
+  <tr><td>PASS</td><td>0</td><td>No known-bad patterns were found in what was scanned. That is not a guarantee the skill is safe — see the limits below.</td></tr>
+  <tr><td>CAUTION</td><td>1</td><td>Something worth a human read before installing. Read the findings and decide whether each one makes sense for what the skill claims to do.</td></tr>
+  <tr><td>BLOCK</td><td>2</td><td>At least one block-severity pattern was found. Do not install until you have read the findings and judged the context for yourself.</td></tr>
+</table>
+
+<p>Exit code 3 means the scanner itself could not run (bad path, bad
+flags) — deliberately distinct from BLOCK. Because the verdicts are exit
+codes, the same scan works as a CI / install-time gate.</p>
+
+<p>Reports also come in other formats:
+<code>skillscan &lt;folder&gt; --format md</code> for Markdown,
+<code>--format json</code> for machine-readable output, and
+<code>--format sarif</code> for SARIF 2.1.0 toolchains.</p>
+
+<h2>Honest limits</h2>
+
+<p>SkillScan is a linter, not a guarantee of safety. A PASS means "no
+known-bad patterns were found in the files that were scanned" — not "this
+skill is safe". Runtime behaviour is invisible to a static scan, and
+deeply dynamic code can slip through. The full limits list is on the
+<a href="index.html">index page</a> and in the
+<a href="https://github.com/RakTikoo/skillscan">repository</a>. SkillScan's
+own measured detection and false-block rates — including the families
+where the rates are poor — are on the
+<a href="numbers.html">measured results</a> page.</p>
+
+<p>Already installed a skill and want to know whether it has changed
+since? See <a href="skill-changed.html">Did this skill change since I
+installed it?</a></p>
+
+<footer>
+  <p><a href="https://github.com/RakTikoo/skillscan">SkillScan by RakTikoo</a> — free and open source (MIT)</p>
+</footer>
+
+</body>
+</html>

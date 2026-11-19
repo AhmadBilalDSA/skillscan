@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Did this skill change since I installed it? — SkillScan by RakTikoo</title>
+<meta name="description" content="A skill can be safe on the day you install it and silently different a week later. SkillScan by RakTikoo can fingerprint a skill with --pin and report exactly what changed later with --check-pin.">
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; color: #1a1a1a; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.7rem; line-height: 1.25; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; }
+  code { background: #f0f0f0; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
+  pre { background: #f6f6f6; padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 0.35rem 0.7rem; text-align: left; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ddd; font-size: 0.9rem; color: #555; }
+  a { color: #0b5cad; }
+</style>
+</head>
+<body>
+
+<h1>Did this skill change since I installed it?</h1>
+
+<p>A skill can be safe on the day you install it and silently different a
+week later. <a href="https://github.com/RakTikoo/skillscan">SkillScan by
+RakTikoo</a> has a change watch for exactly that question:
+<code>--pin</code> records a fingerprint of a scanned folder, and
+<code>--check-pin</code> later re-scans and reports a plain diff of what
+changed.</p>
+
+<h2>1. Pin the skill when you install it</h2>
+
+<pre><code>python3 -m skillscan &lt;path-to-skill-folder&gt; --pin pin.json</code></pre>
+
+<p>The pin records a hash of every entry in the folder, the verdict, the
+findings, and the rule-set version. A real run looks like this:</p>
+
+<pre><code>Pinned 3 entries from .../my-skill (verdict PASS) -&gt; pin.json</code></pre>
+
+<p>The fingerprint covers <em>every</em> entry — regular files of every
+type (not only the ones the scanner reads, because a change can arrive as
+a file the scanner does not parse), directories, special files, the
+permission bits on files, and symlinks. Nothing is skipped, not even
+<code>.git</code> or <code>__pycache__</code>.</p>
+
+<p>Keep the pin <em>outside</em> the folder it fingerprints: a pin inside
+it can be rewritten by the same hand that changed the folder, and
+<code>--pin</code> warns when asked to write one there.</p>
+
+<h2>2. Check it later</h2>
+
+<pre><code>python3 -m skillscan &lt;path-to-skill-folder&gt; --check-pin pin.json</code></pre>
+
+<p>If nothing changed, the answer is one line and exit code 0:</p>
+
+<pre><code>No changes: every entry in the folder is identical to the pin (pin.json), and the scan result is the same (verdict PASS).</code></pre>
+
+<p>If files changed but the scan result did not, the changed entries are
+named and the exit code is 1:</p>
+
+<pre><code>Files changed on disk — same scan result (verdict and findings identical).
+Added files (1):
+  + notes.txt</code></pre>
+
+<p>Findings are compared by what they say, not by line number: inserting
+a comment above a flagged line is a files-changed (1), not a scan-result
+change.</p>
+
+<h2>Check-pin exit codes</h2>
+
+<table>
+  <tr><th>Exit code</th><th>Meaning</th></tr>
+  <tr><td>0</td><td>No entry changed. (A rule-set version difference alone is reported, not failed — the scanner changed, not the skill.)</td></tr>
+  <tr><td>1</td><td>Files changed, but the scan result (verdict + findings) is identical.</td></tr>
+  <tr><td>2</td><td>The scan result changed — review before trusting this skill again.</td></tr>
+  <tr><td>3</td><td>The pin cannot be used.</td></tr>
+</table>
+
+<h2>Two honest limits</h2>
+
+<ul>
+  <li>An edit that changes neither a finding's rule, evidence, nor count on an already-flagged file (for example swapping the host on an already-flagged network line) also lands at exit 1, with the file named — read the named files.</li>
+  <li>A skill that writes runtime state (logs, caches) inside its own folder will show those as changed entries.</li>
+</ul>
+
+<p>New to SkillScan? Start with
+<a href="check-a-skill.html">How to check if an agent skill is safe before installing</a>.</p>
+
+<footer>
+  <p><a href="https://github.com/RakTikoo/skillscan">SkillScan by RakTikoo</a> — free and open source (MIT)</p>
+</footer>
+
+</body>
+</html>

@@ -1,4 +1,4 @@
-# SkillScan — scan an AI agent skill or MCP server before you install it
+# SkillScan by RakTikoo — scan an AI agent skill or MCP server before you install it
 
 Scan an AI-agent skill or MCP server before you install it.
 
