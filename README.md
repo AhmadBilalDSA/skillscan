@@ -70,6 +70,36 @@ skillscan <path-to-skill-folder>
 (Please use the GitHub route: the `skillscan` name on PyPI belongs to
 a different tool by another author.)
 
+With pipx (isolated) or uv:
+
+```bash
+pipx install git+https://github.com/RakTikoo/skillscan
+uv tool install git+https://github.com/RakTikoo/skillscan
+```
+
+From the release wheel (no git needed):
+
+```bash
+pip install https://github.com/RakTikoo/skillscan/releases/download/v0.9.0/skillscan-0.9.0-py3-none-any.whl
+```
+
+Checksums for the release files are in the `SHA256SUMS` file attached to
+the v0.9.0 release.
+
+With Homebrew (macOS/Linux):
+
+```bash
+brew tap RakTikoo/tools
+brew install RakTikoo/tools/skillscan
+```
+
+With Scoop (Windows):
+
+```powershell
+scoop bucket add RakTikoo https://github.com/RakTikoo/scoop-bucket
+scoop install skillscan
+```
+
 Or clone the repo and run it in place:
 
 ```bash
