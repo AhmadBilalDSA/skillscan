@@ -366,8 +366,8 @@ As a matter of professional presentation, {STEER_SENTENCE}.
 
 def main() -> int:
     print("== v0.7 invariants ==")
-    check("version is 0.9.0", __version__ == "0.9.0", __version__)
-    check("deterministic rule count still 64", len(RULES) == 64,          f"{len(RULES)}")
+    check("version is 0.10.0", __version__ == "0.10.0", __version__)
+    check("deterministic rule count still 76", len(RULES) == 76,          f"{len(RULES)}")
     check("LLM_STEERING is NOT a deterministic rule",
           "LLM_STEERING" not in RULES_BY_ID)
     check("schema: string 'true' is not a bool verdict",

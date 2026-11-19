@@ -7,7 +7,7 @@ name = "skillscan"
 # Keep in step with skillscan/__init__.py's __version__ at release time.
 # (Not setuptools-dynamic: the repo-root skillscan.py shim makes
 # attr-based version lookup load the shim instead of the package.)
-version = "0.9.0"
+version = "0.10.0"
 description = "Deterministic, offline scanner for AI-agent skills and MCP servers — check a skill before you install it."
 readme = "README.md"
 requires-python = ">=3.10"

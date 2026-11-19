@@ -80,11 +80,11 @@ uv tool install git+https://github.com/RakTikoo/skillscan
 From the release wheel (no git needed):
 
 ```bash
-pip install https://github.com/RakTikoo/skillscan/releases/download/v0.9.0/skillscan-0.9.0-py3-none-any.whl
+pip install https://github.com/RakTikoo/skillscan/releases/download/v0.10.0/skillscan-0.10.0-py3-none-any.whl
 ```
 
 Checksums for the release files are in the `SHA256SUMS` file attached to
-the v0.9.0 release.
+the v0.10.0 release.
 
 With Homebrew (macOS/Linux):
 
@@ -392,7 +392,7 @@ model. The deterministic benchmark figures below are
 offline-mode numbers and do not change.
 
 **What remains open** (updated on every push; last updated
-2026-11-15):
+2026-11-19):
 
 - **Qwen's benign set is still being priced.** The run is
   resumable and continues daily across free-tier windows until
@@ -491,6 +491,33 @@ offline-mode numbers and do not change.
   shipped. The shipped `--llm` mode is unchanged; a future
   attempt needs a way to keep simpler models off the honest
   lookalike cases.
+- **The gap wave shipped (v0.10.0): twelve new BLOCK rules,
+  priced before they were built.** The internal comparison
+  had one family where this scanner trailed badly —
+  dependency / supply chain (14.4% BLOCK). Twelve
+  deterministic rules whose priced forms are themselves
+  the harm now BLOCK: installs resolved from a bare public
+  IP, setuid/setgid chmods, sudoers and sudo-group grants,
+  sitecustomize writes, scheduled-task creation, cron,
+  Startup-folder and registry-Run writes, miner binaries
+  in delivery position, stratum pool endpoints, and
+  PowerShell fetch-and-execute. Measured: malicious BLOCK
+  49.7% → 54.2%, supply chain 14.4% → 77.2%, benign
+  verdicts unchanged on both benign sets. Priced and
+  **not** built, because each trips mainstream honest
+  tools: unpinned named-registry installs (380 benign
+  trips — they stay CAUTION), unpinned VCS dependencies,
+  plain-http named-host installs, custom package indexes,
+  and download-then-execute chains. One built rule was
+  removed after review: `dd` disk-fill is syntactically
+  identical in its honest uses (disk images, swap files,
+  LUKS keyfiles), so no deterministic separator exists.
+  Four sibling shapes found by the red team (PowerShell
+  `Register-ScheduledTask`, miner `-o host:port` endpoints
+  without a stratum literal, config-file index surfaces,
+  decimal/hex IPv4 and IPv6 literals) are queued as
+  unpriced candidates — each needs its own pricing before
+  it may BLOCK.
 - **The deterministic coverage programme continues.** v0.7.1
   extended ERROR_INFO_LEAK to JavaScript/TypeScript; the
   remaining documented gaps live in
@@ -515,7 +542,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
   `verdict` / `exit-code` outputs) runs SkillScan in CI:
 
   ```yaml
-  - uses: RakTikoo/skillscan@v0.9.0
+  - uses: RakTikoo/skillscan@v0.10.0
     with:
       path: ./skills/my-skill        # folder to scan
       fail-on-block: "true"          # default: BLOCK fails the job
@@ -538,7 +565,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
 
 ## Rules
 
-64 deterministic rules. Any block-severity hit makes the verdict BLOCK;
+76 deterministic rules. Any block-severity hit makes the verdict BLOCK;
 otherwise any caution hit makes it CAUTION; otherwise PASS. Every rule
 also carries an OWASP mapping (LLM Top 10 / MCP Top 10 category codes),
 surfaced per finding in JSON output and in SARIF rule metadata — it is
@@ -610,6 +637,18 @@ triage metadata only and never affects the verdict.
 | MCP_DESCRIPTION_INSTRUCTION | caution | An MCP tool description steers the agent beyond the tool's own function: cross-tool preference ("always use this tool instead of…"), instruction overrides, or a credential store named inside an instruction |
 | MCP_DESCRIPTION_POISONING | block | The tool-poisoning shape in an MCP tool description: it tells the agent to keep actions hidden from the user, or to read a credential store (SSH keys, `.env`, credential files) and pass its contents along |
 | INJECTION_EXECUTION | block | Promotion combination — the one promotion that ships: a temp-path injection point (`ENV_INJECTION` from the dedicated temp-path matchers — code or prose staging a file at a fixed temp path tied to execution, where the finding's line names no loader variable) **and** an execution or download-and-run surface in the same file — write to a world-writable staging path and run it. Loader-variable assignments do not count: they stay `ENV_INJECTION` at caution |
+| INSTALL_FROM_BARE_IP | block | An install command resolves its package from a bare **public** IPv4 host (a direct URL, or an index/registry option) — private, loopback, link-local and other non-global ranges never fire; named mirrors stay `INSTALL_FROM_URL` cautions |
+| SETUID_CHMOD | block | Sets the setuid/setgid bit — strict forms only: an octal mode carrying the setuid/setgid digit, symbolic `+s`, `os.chmod` with such a mode, `install -m` |
+| SUDOERS_GRANT | block | A strict NOPASSWD sudo grant line, or grant content written to `/etc/sudoers` or `/etc/sudoers.d` — a bare path mention never fires |
+| SUDO_GROUP_GRANT | block | Adds a user to the sudo/wheel group (`usermod -aG sudo`, `gpasswd`, `adduser` / `useradd` forms) |
+| SITECUSTOMIZE_WRITE | block | Writes `sitecustomize` / `usercustomize` into a site-packages or startup location — code Python runs at every interpreter start |
+| SCHTASKS_CREATE | block | Creates a Windows scheduled task (`schtasks /create` — `/run` and `/change` are not the creation form) |
+| CRON_PATH_WRITE | block | A write anchored to a cron location's own statement, or a crontab install form — reads and listings never fire |
+| STARTUP_FOLDER_WRITE | block | A write whose target is a Windows Startup folder |
+| REGISTRY_RUN_WRITE | block | Writes a value under a `CurrentVersion\Run` / `RunOnce` registry key — set verbs only; deletions, exports and reads never fire |
+| MINER_BINARY_CONTEXT | block | A known miner binary in command/delivery position, or beside a pool endpoint in the same statement — a bare name in a detector's list does not fire |
+| STRATUM_ENDPOINT | block | A stratum mining-pool endpoint literal (`stratum+tcp/ssl://`, `stratum2+…`) — the literal's only function is a pool connection |
+| POWERSHELL_REMOTE_EXEC | block / caution | PowerShell fetch-and-execute: `iex` applied to a web request, or an execution-linked `DownloadString` / `DownloadData` — BLOCK on script surfaces, CAUTION in documentation (the `CURL_PIPE_BASH` doctrine); a bare download never fires |
 
 Every rule ships with a plain-English reason in the report, so a
 non-specialist can understand *why* something was flagged.
@@ -676,6 +715,32 @@ challenges it, by design of static analysis:
   a combination is promoted only when it is a completed chain
   with no mainstream benign twin — currently that is only the
   temp-path `INJECTION_EXECUTION` shape above.
+- **Unpinned installs stay CAUTION.** Installing a named
+  package without a version pin, from a named host over
+  plain http, or from a custom index is ordinary setup
+  for mainstream tools — the unpinned-install shape alone
+  trips 380 benign corpus skills — so those stay with
+  `RUNTIME_PACKAGE_INSTALL` / `INSTALL_FROM_URL` at
+  CAUTION. What BLOCKs is the shape with no honest
+  mainstream twin: an install resolved from a bare
+  public IP address (`INSTALL_FROM_BARE_IP`).
+- **Dual-use primitives are not blocked on shape alone.**
+  A priced `dd` disk-fill rule was built, measured and
+  removed: `dd if=/dev/zero` writing a disk image, a swap
+  file or a LUKS keyfile is syntactically identical to
+  disk-fill abuse, and no deterministic separator exists.
+  The same line is why disclosed setuid chmods, sudo-group
+  grants and scheduled-task creation *do* BLOCK — they
+  sit in the disclosed-privilege / persistence stance
+  family this scanner already applies — while an exported
+  `.reg` file used as test data BLOCKs under
+  `REGISTRY_RUN_WRITE`: it is byte-identical to an
+  importable installer `.reg`, and no deterministic
+  separator exists there either. PowerShell
+  fetch-and-execute shown in documentation is CAUTION,
+  not BLOCK — the documentation severity doctrine the
+  scanner already applies to `CURL_PIPE_BASH`; on script
+  surfaces it BLOCKs.
 - **Secret detection is heuristic.** The live-format tier needs the
   complete token in one place; the generic tier's regex floor is an
   8-character value, but its entropy requirement (≥3.5 bits per
@@ -758,7 +823,7 @@ python3 run_v06fix2_tests.py   # v0.6 fix wave 2: demotion hardening (code-only 
 
 [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) maps 25 techniques
 from four published audits of real malicious skills / MCP servers
-against the 64 rules above. Summary (Covered / Partial / Gap per audit):
+against the 76 rules above. Summary (Covered / Partial / Gap per audit):
 
 | Audit | Covered | Partial | Gap |
 |-------|---------|---------|-----|
@@ -786,11 +851,11 @@ SkillScan's own measured rates on a public labelled corpus —
 2,235 benign), pinned at GitHub commit
 `893afd609be22a2dfac5a2b94bbebb4eeb99515e` and Hugging Face
 revision `d4b42ce5766a6e0359c987cf59c1007cb3795a90`. First run
-2026-11-11 with SkillScan v0.6.0; re-run 2026-11-15 with the
-current tree (64 deterministic rules, including the
-`INJECTION_EXECUTION` promotion and the false-BLOCK fix wave
-described below) — the figures below are that run, made with
-the deterministic offline mode only (no `--llm`). Malicious skills were scanned as
+2026-11-11 with SkillScan v0.6.0; re-run 2026-11-19 with the
+current tree (76 deterministic rules, including the
+gap-wave rules described below) — the figures below are
+that run, made with the deterministic offline mode only
+(no `--llm`). Malicious skills were scanned as
 complete extracted folders; benign skills are shipped by the
 benchmark as frozen text, so each was scanned as a single
 `SKILL.md` folder. Nothing was executed — folders were read as
@@ -799,7 +864,7 @@ text only. Full methodology, counting rules and caveats:
 
 | Set | Skills | BLOCK | CAUTION | PASS |
 |-----|--------|-------|---------|------|
-| Malicious | 7,421 | **49.7%** (3,689) | 32.7% (2,427) | 17.6% (1,305) |
+| Malicious | 7,421 | **54.2%** (4,019) | 28.3% (2,097) | 17.6% (1,305) |
 | Benign | 2,235 | 0% false BLOCKs (0) | 24.7% (551) | 75.3% (1,684) |
 
 Detection at BLOCK+CAUTION (flagged at any severity): **82.4%**
@@ -809,25 +874,42 @@ was ~106 ms per malicious skill (p95 ~600 ms) and ~44 ms per
 benign skill.
 
 Detection by attack family (multi-label membership; BLOCK /
-BLOCK+CAUTION). The BLOCK column is the 2026-11-15 run;
+BLOCK+CAUTION). The BLOCK column is the 2026-11-19 run;
 BLOCK+CAUTION is unchanged from the v0.8.0 run except for
 one skill (see the fix wave below), because the promotion
-only moved skills that were already flagged:
+and the gap wave only moved skills that were already
+flagged:
 
 | Family | Skills | BLOCK | BLOCK+CAUTION |
 |--------|--------|-------|---------------|
-| Privilege / tool-authority abuse | 1,004 | 78.2% | 99.4% |
-| Execution / code delivery | 3,205 | 79.2% | 97.9% |
-| Credential access | 197 | 54.3% | 95.9% |
-| Persistence / control | 249 | 55.4% | 90.0% |
-| Instruction / goal manipulation | 1,560 | 70.4% | 86.2% |
-| Data exfiltration / disclosure | 266 | 35.0% | 83.8% |
-| Resource / availability abuse | 330 | 41.5% | 90.3% |
-| Dependency / supply chain | 167 | 14.4% | 87.4% |
+| Privilege / tool-authority abuse | 1,004 | 88.5% | 99.4% |
+| Execution / code delivery | 3,205 | 83.1% | 97.9% |
+| Credential access | 197 | 55.3% | 95.9% |
+| Persistence / control | 249 | 68.3% | 90.0% |
+| Instruction / goal manipulation | 1,560 | 72.1% | 86.2% |
+| Data exfiltration / disclosure | 266 | 35.3% | 83.8% |
+| Resource / availability abuse | 330 | 46.4% | 90.3% |
+| Dependency / supply chain | 167 | 77.2% | 87.4% |
 | Defense evasion / obfuscation | 20 | 10.0% | 100% |
 | Integrity / output manipulation | 97 | 2.1% | 28.9% |
-| Discovery / reconnaissance | 5 | 0.0% | 20.0% |
-| (No category assigned) | 2,591 | 26.8% | 67.5% |
+| Discovery / reconnaissance | 5 | 20.0% | 20.0% |
+| (No category assigned) | 2,591 | 30.3% | 67.5% |
+
+### What moved in this run (2026-11-19)
+
+Twelve new deterministic BLOCK rules (the gap wave — see
+"What remains open"). 330 malicious skills moved from
+CAUTION to BLOCK, every transition attributed to a new
+rule; nothing else moved: the PASS count is identical
+(1,305), BLOCK+CAUTION is unchanged at 82.4% because every
+gain upgraded a skill that was already flagged, and the
+benign side is verdict-identical (0 / 551 / 1,684 — four
+benign folders gain a CAUTION-severity PowerShell finding,
+verdicts unchanged). The dependency / supply-chain
+family's BLOCK rate rose 14.4% → 77.2%. The priced shapes
+that trip mainstream honest tools (unpinned named installs
+above all) were not built, and one built rule (`dd`
+disk-fill) was removed as dual-use — see Known limits.
 
 ### What moved in this run (2026-11-15)
 
@@ -927,9 +1009,10 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2026 RakTikoo.
 
 ## Status
 
-Current release: **v0.9.0** (2026-11-15). It carries the
-`INJECTION_EXECUTION` promotion (64 rules) and the
-false-BLOCK fix wave on top of v0.8.0 — see the CHANGELOG. SkillScan began as a
+Current release: **v0.10.0** (2026-11-19). It carries the
+gap wave — twelve new deterministic BLOCK rules (76 rules)
+closing the measured supply-chain gap — on top of v0.9.0;
+see the CHANGELOG. SkillScan began as a
 Week 1 spike; every version since has passed the full test
 suites and an independent adversarial review before it was
 pushed. The short history: v0.1–v0.2 built the deterministic
@@ -962,7 +1045,12 @@ tightened three over-broad rules to require the evidence
 their names claim; the measured combinations that did not
 survive — the broad capability pairs, the shell-string
 narrowing, cross-file dataflow — are recorded as parked,
-with their reasons, in the same block. Expect false positives and false negatives; the
+with their reasons, in the same block. v0.10.0 added the
+gap wave: twelve priced deterministic rules (76 in all)
+aimed at the families where measurement showed this
+scanner trailing — supply chain above all — each built
+only in a form with no benign trips, and one built rule
+(`dd` disk-fill) removed as dual-use. Expect false positives and false negatives; the
 rule set and corpus are a starting point, not a finished
 product. Issues and new evasion samples are welcome — a
 mutation that evades SkillScan is a valuable contribution.

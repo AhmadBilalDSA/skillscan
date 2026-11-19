@@ -78,10 +78,10 @@ def main() -> int:
 
     sys.path.insert(0, str(ROOT))
     import skillscan
-    check("version-is-0.9.0", skillscan.__version__ == "0.9.0",
+    check("version-is-0.10.0", skillscan.__version__ == "0.10.0",
           skillscan.__version__)
     from skillscan.rules import RULES
-    check("rule-count-64", len(RULES) == 64, f"{len(RULES)} rules")
+    check("rule-count-76", len(RULES) == 76, f"{len(RULES)} rules")
     new_ids = {"OUTPUT_MANIPULATION", "PROSE_INSTRUCTION_EN",
                "PROSE_FETCH_EXECUTE", "PROSE_PIPE_INSTRUCTION",
                "PROSE_READ_SEND", "PROSE_SAFETY_BYPASS",

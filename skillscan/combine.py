@@ -141,7 +141,34 @@ CAPABILITY_RULES: dict[str, frozenset[str]] = {
     }),
     "network-access": frozenset({"NETWORK_ACCESS"}),
     "file-delete": frozenset({"FILE_DELETE", "RM_RF"}),
-    "persistence": frozenset({"PERSISTENCE"}),
+    # Gap wave (fix wave 3, CODEAUDIT SF-5): the wave's dedicated
+    # persistence shapes are the same capability as PERSISTENCE —
+    # a set whose only persistence evidence is, say, a schtasks
+    # creation can now complete the file-delete + persistence
+    # pair. (The doc-tier gate in _finding_counts still keeps
+    # doc-surface findings of these non-prose rules from creating
+    # the capability.)
+    "persistence": frozenset({
+        "PERSISTENCE",
+        "SITECUSTOMIZE_WRITE", "SCHTASKS_CREATE", "CRON_PATH_WRITE",
+        "STARTUP_FOLDER_WRITE", "REGISTRY_RUN_WRITE",
+    }),
+    # Gap-wave privilege shapes: standing root/admin access
+    # granted by a skill. No PAIRS entry consumes this capability
+    # yet — it is reported in member capability summaries only,
+    # so a set scan names the privilege half honestly instead of
+    # silently dropping it.
+    "privilege-escalation": frozenset({
+        "SUDOERS_GRANT", "SUDO_GROUP_GRANT", "SETUID_CHMOD",
+    }),
+    # Deliberately NOT placed: INSTALL_FROM_BARE_IP,
+    # POWERSHELL_REMOTE_EXEC, STRATUM_ENDPOINT and
+    # MINER_BINARY_CONTEXT. Combine's taxonomy has no
+    # download/supply capability and no pair consumes one;
+    # folding them into "network-access" would let them complete
+    # the credential-store-read pair at fetch-only strength,
+    # which overstates what that pair claims. They remain
+    # solo-scan BLOCKs, reported per member as before.
 }
 
 _STORE_READ_RULES = frozenset({
@@ -164,6 +191,7 @@ CAPABILITY_LABELS = {
     "network-access": "reach the network",
     "file-delete": "delete files",
     "persistence": "install persistence",
+    "privilege-escalation": "escalate privileges",
 }
 
 _STORE_PAIR_NOTE = (

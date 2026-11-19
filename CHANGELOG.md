@@ -4,7 +4,95 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
-## Unreleased
+## v0.10.0 — 2026-11-19
+
+- **Gap wave: thirteen priced deterministic shapes (64 → 77
+  rules), each BLOCK because the shape itself is the harm.**
+  Every shape was priced against the malicious and benign
+  corpora before it was built — zero trips on either benign
+  corpus was the gate — and is implemented in its priced form:
+  INSTALL_FROM_BARE_IP (an install command whose package
+  source is a bare public IPv4 host, direct or via an
+  index/registry option; private, loopback and link-local
+  hosts excluded — named mirrors such as Aliyun, the PyTorch
+  CUDA index and the Tsinghua mirror stay CAUTION under
+  INSTALL_FROM_URL); SETUID_CHMOD (strict forms only: octal
+  modes with the setuid/setgid digit, symbolic +s, os.chmod
+  with such a mode, install -m — the loose form that tripped
+  on `chmod +x` file names ending in s is excluded by
+  construction); SUDOERS_GRANT (one rule, two anchors: a write
+  bound to /etc/sudoers or /etc/sudoers.d itself, or a strict
+  NOPASSWD grant line — a bare path mention never fires);
+  SUDO_GROUP_GRANT (usermod/gpasswd/adduser/useradd forms);
+  SITECUSTOMIZE_WRITE (sitecustomize/usercustomize into
+  site-packages with a write verb in the file; the .pth form
+  stays with ENV_INJECTION_INSTALL); SCHTASKS_CREATE
+  (`schtasks /create` only — /run and /change are not the
+  creation form); CRON_PATH_WRITE (a write anchored to a cron
+  path's own statement, or a crontab install form; reads and
+  listings never fire); STARTUP_FOLDER_WRITE (a Startup-folder
+  path with a write verb in the file); REGISTRY_RUN_WRITE
+  (Run/RunOnce writes only — reg add, property cmdlets,
+  registry-API value writes, .reg values — with doubled
+  backslashes normalised; forensics reads never fire);
+  MINER_BINARY_CONTEXT (a known miner binary with a pool /
+  stratum / download / chmod / URL context in the same file —
+  a bare name in a detector's list does not fire);
+  STRATUM_ENDPOINT (stratum+tcp/ssl/tls URLs);
+  POWERSHELL_REMOTE_EXEC (DownloadString, DownloadData paired
+  with an assembly load, iex applied to a web request);
+  DD_DISK_FILL (`dd if=/dev/zero of=<regular file>` only —
+  device targets are a different, already-covered class).
+  Fixtures: run_gapwave_tests.py (positives for every priced
+  form, negatives for every legitimate twin named in the
+  pricing notes).
+
+- **Gap-wave fix wave 3: adversarial-review fixes (77 → 76
+  rules).** Anchored writes are now destination-bound
+  everywhere: copying or moving OUT of a protected path
+  (backups, uninstallers, IR quarantine) no longer fires
+  SUDOERS_GRANT, CRON_PATH_WRITE, SITECUSTOMIZE_WRITE or
+  STARTUP_FOLDER_WRITE (the last switched to the shared
+  anchored-write helper, with variable-destination linkage).
+  INSTALL_FROM_BARE_IP requires a globally routable address
+  (CGNAT/Tailscale 100.64/10, documentation and other
+  non-global ranges no longer fire; the attached `-i<url>`
+  spelling now works). SUDOERS_GRANT's NOPASSWD anchor
+  requires the full grant grammar, its path-write anchor
+  requires grant content in the file, and `visudo -c` is
+  validation, not a write. REGISTRY_RUN_WRITE ignores .reg
+  deletion values (`"name"=-`), delete-only registry files,
+  and exports/queries, and its fallback requires
+  statement-level linkage. POWERSHELL_REMOTE_EXEC is aligned
+  to the product's fetch-execute severity matrix: BLOCK on
+  script surfaces, CAUTION in documentation for every
+  sub-form, and a download counts only when execution-linked
+  (bare DownloadString/DownloadData no longer fire).
+  MINER_BINARY_CONTEXT is replaced by its priced targeted
+  form (the name in command/delivery position, or beside a
+  pool endpoint in the same statement). DD_DISK_FILL is
+  REMOVED: dd filling a file or device is a dual-use
+  primitive whose honest mainstream uses are syntactically
+  identical to the abuse form, and no deterministic
+  separator exists; its fixtures remain as negative
+  documentation. STRATUM_ENDPOINT also matches the
+  stratum2+tcp/ssl spellings. The new rules now participate
+  in --combine (persistence set extended; a
+  privilege-escalation capability added). Performance tails
+  in the sitecustomize and sudo-group matchers are bounded.
+  Fixtures: run_gapwave_tests.py (119 checks).
+
+- **Measured result (pinned MaliciousSkillBench corpus).**
+  Malicious BLOCK 49.7% → 54.2% (3,689 → 4,019 of 7,421),
+  every gain a CAUTION → BLOCK upgrade by a new rule;
+  BLOCK+CAUTION unchanged at 82.4% (6,116). Benign verdicts
+  identical to v0.9.0 (0 false BLOCKs; 551 CAUTION / 1,684
+  PASS), and the code-bearing benign set is unchanged
+  (49 BLOCKs, all stated stances). By family, BLOCK rose:
+  dependency / supply chain 14.4% → 77.2%, privilege /
+  tool-authority abuse 78.2% → 88.5%, persistence / control
+  55.4% → 68.3%, execution / code delivery 79.2% → 83.1%.
+  Full accounting in the README benchmark section.
 
 ## v0.9.0 — 2026-11-15
 

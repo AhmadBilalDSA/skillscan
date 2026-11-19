@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import io
 from bisect import bisect_left
+import ipaddress
 import json
 import math
 import os
@@ -7063,6 +7064,1010 @@ def _pth_findings(rel: str, lines: list[str], add) -> None:
 
 
 # --------------------------------------------------------------------------
+# Gap wave (2026-11-18): priced deterministic shapes
+# --------------------------------------------------------------------------
+#
+# Each shape below was priced against the malicious and benign corpora
+# before it was built (see the wave's pricing notes): it ships at BLOCK
+# only because the shape itself is the harm, with zero trips on either
+# benign corpus. The forms are implemented EXACTLY as priced — where
+# the pricing called for anchoring (a write bound to the target path's
+# own statement) or a strict form (setuid chmod), the matcher is built
+# so the loose form cannot fire by construction.
+
+# --- S1: install from a bare public IPv4 host ----------------------------
+
+_IP_URL_HOST_RE = re.compile(
+    r"^(?:git\+)?[a-z][a-z0-9+.\-]*://(?:[^/@\s\"']+@)?([^/:?\s\"'`,;\]]+)",
+    re.IGNORECASE)
+_IP_FLAG_NAMES = {"-i", "--index-url", "--extra-index-url", "--registry"}
+
+
+def _is_public_ipv4(host: str) -> bool:
+    """True only for a globally routable IPv4 literal (fix wave 3,
+    CODEAUDIT SF-1). The hand-rolled negation list used before
+    classified the shared/CGNAT range 100.64.0.0/10 — the Tailscale
+    address range — and three special-purpose /24s as public,
+    because CPython's is_private is False for them. `is_global`
+    is the correct predicate: private, loopback, link-local,
+    reserved, multicast, unspecified, documentation, benchmarking
+    and shared/CGNAT addresses are all non-global and are the
+    user's own infrastructure, excluded deterministically."""
+    try:
+        ip = ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return ip.is_global
+
+
+def _url_host_public_ip(url: str) -> bool:
+    m = _IP_URL_HOST_RE.match(url.strip().strip("\"'").strip(","))
+    return bool(m) and _is_public_ipv4(m.group(1))
+
+
+def _bare_ip_install_hit(line: str) -> bool:
+    """S1, priced form: an install command — judged with the existing
+    INSTALL_FROM_URL segmentation (_INSTALL_CMD_RE, command splitting,
+    segment cutting, comment handling in _classify_install_args) —
+    whose package source is a URL with a public IPv4 literal host,
+    either a direct argument or the value of an index / registry flag
+    (--index-url / --extra-index-url / -i / --registry)."""
+    for segment in _CMD_SPLIT_RE.split(line):
+        m = _INSTALL_CMD_RE.search(segment)
+        if m is None:
+            continue
+        tail = _SEGMENT_CUT_RE.split(segment[m.end():], maxsplit=1)[0]
+        tail = re.split(r"\s+#", tail, maxsplit=1)[0]
+        tokens = [t.strip().strip("\"'").strip(",") for t in tail.split()]
+        tokens = [t for t in tokens if t]
+        for i, t in enumerate(tokens):
+            low = t.lower()
+            base = low.split("=", 1)[0]
+            # Attached spelling `-i<url>` (fix wave 3, CODEAUDIT
+            # note): the old branch for it was dead — `base` is the
+            # whole token, so base == "-i" implied len(t) == 2.
+            if base.startswith("-i") and not base.startswith("--") \
+                    and len(t) > 2:
+                if _url_host_public_ip(t[2:]):
+                    return True
+                continue
+            if base in _IP_FLAG_NAMES:
+                if "=" in t:
+                    val = t.split("=", 1)[1]
+                elif i + 1 < len(tokens):
+                    val = tokens[i + 1]
+                else:
+                    val = ""
+                if val and _url_host_public_ip(val):
+                    return True
+                continue
+            if re.match(r"(https?://|git\+|git://|ssh://)", low) \
+                    or re.search(r"@(https?://|git\+)", low):
+                cand = t
+                if "@" in cand and "://" not in cand.split("@", 1)[0]:
+                    cand = cand.split("@", 1)[1] \
+                        if re.search(r"@(https?://|git\+)", low) else cand
+                if _url_host_public_ip(cand):
+                    return True
+    return False
+
+
+# --- V2-strict: setuid / setgid chmod ------------------------------------
+# ONLY the strict priced forms. The loose round-1 form (`chmod … s\b`)
+# tripped 10 benign folders on `chmod +x …s` sloppiness (a file name or
+# a word ending in s after +x); it is excluded by construction: the
+# symbolic branch requires `+s` as the mode itself, and the octal
+# branch requires the setuid/setgid digit in the mode's first place.
+
+_SETUID_PATTERNS = [
+    # Fix wave 3 (REDTEAM grammar completion): flag groups are now
+    # any number of -flag tokens (long flags --verbose/--recursive
+    # included), and the octal mode may carry a leading zero
+    # (04755 is the same mode as 4755). The mode token itself is
+    # still the anchor, so the benign +x / 755 twins stay quiet.
+    re.compile(r"\bchmod\s+(?:-\S+\s+)*0?[2467][0-7]{3}\b"),
+    re.compile(r"\bchmod\s+(?:-\S+\s+)*[ugoa]*\+s\b"),
+    re.compile(r"\bchmod\s+[^;|&\n]*?--mode[= ]0?[2467][0-7]{3}\b"),
+    re.compile(r"\bos\.chmod\s*\([^)]*0o[2467][0-7]{3}\b"),
+    re.compile(r"\binstall\s+[^\n;|&]{0,60}?(?:-m\s*|--mode[= ])"
+               r"0?[2467][0-7]{3}\b"),
+]
+
+# --- V1 + V1b: sudoers write (anchored) / NOPASSWD grant ------------------
+
+_SUDOERS_PATH_PAT = r"(?<![\w/])/etc/sudoers(?:\.d/[^\s\"'`,;|&]+)?(?![\w])"
+# Fix wave 3 (FPHUNTER §3 + REDTEAM tag chaining): the NOPASSWD arm
+# requires the FULL grant grammar — a user token, a host spec with
+# `=`, an optional (runas) spec, the NOPASSWD: tag (extra sudoers
+# tags such as SETENV: may chain before the command spec), and a
+# command spec (ALL or a path). A bare "NOPASSWD: ALL" fragment —
+# a detector's search string, a grep pattern, a quoted literal
+# with no grant grammar around it — does NOT fire.
+_SUDOERS_USER_PAT = (
+    r"(?:[A-Za-z_][\w.\-]*|%[\w.\-]+|#\d+|\{[^}\n]{1,60}\}"
+    r"|\$\{?[A-Za-z_][\w]*\}?)")
+_SUDOERS_TAG_PAT = r"(?:[A-Z][A-Z0-9_]*\s*:\s*)"
+_NOPASSWD_RE = re.compile(
+    _SUDOERS_USER_PAT + r"\s+\S+\s*=\s*(?:\([^)]*\)\s*)?"
+    + _SUDOERS_TAG_PAT + r"*?NOPASSWD\s*:\s*"
+    + _SUDOERS_TAG_PAT + r"*(?:ALL\b|/[^\s,;\"'])",
+    re.IGNORECASE)
+# A grant line in full grammar, with or without NOPASSWD (the
+# content test for the path-write anchor, F4b), and the
+# security-weakening Defaults forms that also count as grant
+# content (a Defaults-only drop-in whose Defaults merely tune
+# timeouts/feedback does NOT count).
+_GRANT_LINE_RE = re.compile(
+    _SUDOERS_USER_PAT + r"\s+\S+\s*=\s*(?:\([^)]*\)\s*)?"
+    + _SUDOERS_TAG_PAT + r"*(?:ALL\b|/[^\s,;\"'])",
+    re.IGNORECASE)
+_WEAK_DEFAULTS_RE = re.compile(
+    r"\bDefaults\b[^\n]{0,80}?(?:!authenticate\b|!requiretty\b)",
+    re.IGNORECASE)
+
+# --- V4: sudo / wheel group grant (priced forms) --------------------------
+# Fix wave 3: spans bounded at 200 chars (CODEAUDIT SF-3 — the
+# unbounded lazy spans were quadratic in repeated flag tokens),
+# and the GNU long-flag grammar completions (REDTEAM): usermod
+# --append --groups, useradd --groups, gpasswd --add, and flag
+# tokens before the user argument in adduser.
+
+_SUDO_GROUP_PATTERNS = [
+    re.compile(r"\busermod\s+[^;|&\n]{0,200}?-(?:aG|G)\b"
+               r"[^;|&\n]{0,200}?\b(?:sudo|wheel)\b", re.IGNORECASE),
+    re.compile(r"\busermod\s+[^;|&\n]{0,200}?-(?:a\s+-G|aG\s+\S+\s+-G)\b"
+               r"[^;|&\n]{0,200}?\b(?:sudo|wheel)\b", re.IGNORECASE),
+    re.compile(r"\busermod\s+[^;|&\n]{0,200}?--groups\b"
+               r"[^;|&\n]{0,200}?\b(?:sudo|wheel)\b", re.IGNORECASE),
+    re.compile(r"\bgpasswd\s+[^;|&\n]{0,200}?(?:-a\b|--add\b)"
+               r"[^;|&\n]{0,200}?\b(?:sudo|wheel)\b", re.IGNORECASE),
+    re.compile(r"\badduser\s+(?:--?\S+\s+)*\S+\s+(?:sudo|wheel)\b",
+               re.IGNORECASE),
+    re.compile(r"\buseradd\s+[^;|&\n]{0,200}?(?:-G\b|--groups\b)"
+               r"[^;|&\n]{0,200}?\b(?:sudo|wheel)\b", re.IGNORECASE),
+]
+
+# --- Anchored-write helper (V1, P4, P6) -----------------------------------
+# A write counts only when it is bound to the target path's OWN
+# statement, with the path as the write TARGET / destination
+# (fix wave 3, CODEAUDIT SF-2 + FPHUNTER direction findings): a
+# redirect into it, tee, an open(..., 'w'/'a') of it, a
+# Path(it).write_text/write_bytes, a copy/move/install whose LAST
+# argument is it (destination position), a dd of= it, visudo -f
+# on it (validation mode -c/--check excluded — that parses, it
+# does not write), a PowerShell content cmdlet aimed at it, a
+# JS writeFileSync whose first argument is it, or a sed -i edit
+# of it whose script is not delete-only. Copying or moving the
+# protected file OUT (backup, uninstall, quarantine), writing
+# the path as CONTENT to some other file, and an unrelated
+# object's write that merely happens near a path mention do NOT
+# match. A bare mention of the path (documentation tables,
+# listings, reads) never matches.
+
+_ANCHORED_WRITE_CACHE: dict[str, list[re.Pattern]] = {}
+_SED_DELETE_ONLY_RE = re.compile(
+    r"\bsed\s+(?:-\S+\s+)*-i\S*\s+[\"']\s*"
+    r"(?:/[^\"']*/)?\s*d\s*[\"']", re.IGNORECASE)
+
+
+def _anchored_write(line: str, path_pat: str) -> bool:
+    pats = _ANCHORED_WRITE_CACHE.get(path_pat)
+    if pats is None:
+        pats = [re.compile(p, re.IGNORECASE) for p in (
+            rf">>?\s*[\"']?(?:{path_pat})",
+            rf"\btee\s+(?:-\S+\s+)*[\"']?(?:{path_pat})",
+            rf"\bopen\s*\(\s*[\"'](?:{path_pat})[\"']\s*,\s*[\"'][wa]",
+            rf"\bopen\s*\(\s*[\"'](?:{path_pat})[\"'][^)]*"
+            rf"(?:mode\s*=\s*)?[\"'][wa][\"']\s*\)",
+            # Path(<path>).write_text/write_bytes, or the path as a
+            # quoted receiver of one — the path must be the object
+            # being written, immediately before the call.
+            rf"(?:{path_pat})[\"']?\s*(?:\)\s*)?\.\s*"
+            rf"(?:write_text|write_bytes)\s*\(",
+            # Copy/move/install family (incl. the Windows copy /
+            # xcopy / robocopy spellings): the path must sit in
+            # DESTINATION position — the last argument of the
+            # command segment.
+            rf"\b(?:cp|mv|install|copy|xcopy|robocopy)\b"
+            rf"[^;|&]{{0,200}}?(?:{path_pat})[\"']?"
+            rf"(?:\s*(?:\)|\])?\s*(?:$|;|&&|\|\|)|[\"']\s*$)",
+            rf"\bdd\b[^;|&]*\bof\s*=\s*[\"']?(?:{path_pat})",
+            rf"\b(?:Set-Content|Add-Content|Out-File|New-Item)\b"
+            rf"[^;]{{0,200}}?(?:{path_pat})",
+            rf"\bwriteFileSync\s*\(\s*[\"'](?:{path_pat})[\"']",
+            rf"\bwriteFile\s*\(\s*[\"'](?:{path_pat})[\"']",
+            # git clone INTO the path (destination is the last
+            # argument), a download whose -o/-O output file is the
+            # path, and mkdir OF the path itself.
+            rf"\bclone\b[^;|&]{{0,200}}?(?:{path_pat})[\"']?"
+            rf"(?:\s*(?:\)|\])?\s*(?:$|;|&&|\|\|)|[\"']\s*$)",
+            rf"\b(?:curl|wget)\b[^;|&]{{0,200}}?-[oO]\s*"
+            rf"[\"']?(?:{path_pat})",
+            rf"\bmkdir\s+(?:-\S+\s+)*[\"']?(?:{path_pat})",
+        )]
+        _ANCHORED_WRITE_CACHE[path_pat] = pats
+    if any(p.search(line) for p in pats):
+        return True
+    # visudo -f edits the file — but -c / --check is parse-only
+    # validation and never a write (F4c).
+    if re.search(rf"\bvisudo\s+(?:-\S+\s+)*-f\s+[\"']?(?:{path_pat})",
+                 line, re.IGNORECASE) \
+            and not re.search(r"\bvisudo\b[^;|&]*"
+                              r"(?:\s--check\b|\s-\S*c\S*\b)", line):
+        return True
+    # sed -i edits the file in place; a delete-only script removes
+    # lines and cannot grant or install anything (the hunter's
+    # strip-NOPASSWD cleanup stays quiet).
+    if re.search(rf"\bsed\s+(?:-\S+\s+)*-i\S*\b[^;|&]{{0,200}}?"
+                 rf"(?:{path_pat})(?:\s|$|[\"'])", line, re.IGNORECASE) \
+            and not _SED_DELETE_ONLY_RE.search(line):
+        return True
+    return False
+
+
+# --- P4: cron locations ----------------------------------------------------
+
+_CRON_PATH_PAT = (
+    r"(?<![\w/])(?:/etc/crontab|/etc/cron\.(?:d|daily|hourly|weekly|monthly)"
+    r"(?:/[^\s\"'`,;|&]*)?|/var/spool/cron(?:/[^\s\"'`,;|&]*)?)")
+# The crontab COMMAND must be in command position (start of a
+# command segment, optionally after sudo / a quote) — the old
+# pattern also matched the FILENAME /etc/crontab in a cp line
+# (`cp /etc/crontab /mnt/backup/…` fired as a crontab install;
+# FPHUNTER §7's backup fixture).
+_CRONTAB_CMD_RE = re.compile(
+    r"(?:^\s*|[;&|]\s*)[\"']?(?:sudo\s+)?crontab\s+(\S+)",
+    re.IGNORECASE)
+
+
+def _crontab_install_hit(line: str) -> bool:
+    """`crontab <file>` installs that file as the user's crontab, and
+    `crontab -` installs from stdin. Listing (-l), removing (-r) and
+    editing (-e) are not installs. The argument must look like a
+    file (a path, or a name with an extension) — prose that merely
+    uses the word as a noun ("add a crontab entry") is not a
+    command and must not fire (block60 c4_persist)."""
+    m = _CRONTAB_CMD_RE.search(line)
+    if not m:
+        return False
+    arg = m.group(1).strip("\"'").rstrip(".,;:)")
+    if arg == "-":
+        return True
+    if arg.startswith("-"):
+        return False
+    return "/" in arg or bool(re.search(r"\.\w{1,10}$", arg))
+
+
+# --- P8: sitecustomize / usercustomize into site-packages ------------------
+# Priced form (FILE-LEVEL co-occurrence — pricing_round3 P8 counted
+# the three tokens anywhere in one file, not on one line): a
+# sitecustomize/usercustomize target, a site-packages / dist-packages
+# (or site.getsitepackages) location context in the same file, AND a
+# write context tied to the target. Wave 1 built only the same-line
+# form and missed the bulk of the priced folders — the SRC010
+# campaign builds the path programmatically
+# (`os.path.join(sp, "sitecustomize.py")`, sp bound to the
+# site-packages dir elsewhere in the file) and opens the resulting
+# VARIABLE for writing, so filename and location never share a line.
+# Fix wave 2 implements the priced file-level form:
+#   arm A (wave 1, kept): the full path on one line + a write verb
+#     somewhere in the file (the prose "create the file
+#     /…/site-packages/sitecustomize.py" shape);
+#   arm B (new): the customize filename in the file + a location
+#     context in the file + a write-target linkage — the filename
+#     itself inside a write call (open-for-write, .write_text /
+#     .write, a copy/move), or a variable assigned from an
+#     expression carrying the filename (a path join / Path
+#     construction) that is used as a write target (open-for-write,
+#     .write_text/.write_bytes, a copy/move destination), or a
+#     variable whose name carries "customize" used the same way.
+# A file that merely reads or mentions sitecustomize has no
+# write-target linkage and never fires.
+
+_SITE_CUSTOMIZE_LINE_RE = re.compile(
+    r"(?:site-packages|dist-packages)[^\n\"']*?"
+    r"(?:site|user)customize\.py\b"
+    r"|(?:site|user)customize\.py\b[^\n\"']*?"
+    r"(?:site-packages|dist-packages)", re.IGNORECASE)
+_SITE_CUSTOMIZE_NAME_RE = re.compile(
+    r"(?:site|user)customize\.py\b", re.IGNORECASE)
+_SITE_LOCATION_RE = re.compile(
+    r"(?:site[-_]packages|dist[-_]packages|getsitepackages|"
+    r"getusersitepackages)", re.IGNORECASE)
+_SITE_ASSIGN_RE = re.compile(
+    r"^\s*([A-Za-z_][\w]*)\s*(?::[^=\n]+)?=(?![=])\s*(.*)$")
+_SITE_OPEN_WRITE_TAIL_RE = re.compile(
+    r",\s*(?:mode\s*=\s*)?[\"'][wa][\"']", re.IGNORECASE)
+
+
+_SITE_PACKAGES_PATH_PAT = (
+    r"(?:site[-_]packages|dist[-_]packages)[^\s\"'`,;|&]*?"
+    r"(?:site|user)customize\.py\b")
+_SITE_NAME_PATH_PAT = r"[^\s\"'`,;|&]*?(?:site|user)customize\.py\b"
+_SITE_PROSE_CREATE_RE = re.compile(
+    r"\b(?:create|write|save|place|put|install|add)\b[^.\n]{0,60}?"
+    r"(?:the\s+file\s+|file\s+)?[`\"']?\S*?(?:"
+    + _SITE_PACKAGES_PATH_PAT + r")", re.IGNORECASE)
+_SITE_VAR_CAP = 32
+
+
+def _sitecustomize_write_line(judged_lines: list[str],
+                              has_write_verb=None) -> int | None:
+    """First line to anchor a SITECUSTOMIZE_WRITE finding on, or
+    None. `judged_lines` is the caller's judged surface.
+
+    Fix wave 3 (FPHUNTER §5): both arms are now DESTINATION-bound.
+    Arm A (wave 1) fired on a full path on one line plus ANY write
+    verb anywhere in the file — an environment doctor that reads
+    the hook and writes its own report BLOCKed. Arm A now requires
+    the write to target the path on that line: an anchored write
+    (see _anchored_write) or a prose creation instruction naming
+    the path as the file to create. Arm B's literal branch gets
+    the same destination checks as its variable branch (before,
+    a copy/move OUT of site-packages with the literal path —
+    backup, quarantine — fired; the variable spelling of the
+    same backup stayed quiet)."""
+    text = "\n".join(judged_lines)
+    if not _SITE_LOCATION_RE.search(text):
+        return None
+    # Arm A: full path on one line + a write TARGETING that path
+    # on the same line.
+    for i, ln in enumerate(judged_lines):
+        if _SITE_CUSTOMIZE_LINE_RE.search(ln) \
+                and (_anchored_write(ln, _SITE_PACKAGES_PATH_PAT)
+                     or _SITE_PROSE_CREATE_RE.search(ln)):
+            return i + 1
+    # Arm B: file-level location + write-target linkage.
+    name_lines = [i + 1 for i, ln in enumerate(judged_lines)
+                  if _SITE_CUSTOMIZE_NAME_RE.search(ln)]
+    if not name_lines:
+        return None
+    # Variables assigned from an expression carrying the filename.
+    target_vars: set[str] = set()
+    for ln in judged_lines:
+        am = _SITE_ASSIGN_RE.match(ln)
+        if am and _SITE_CUSTOMIZE_NAME_RE.search(am.group(2)):
+            target_vars.add(am.group(1))
+    # Variables whose name itself carries the target's name.
+    for vm in re.finditer(r"\b([A-Za-z_][\w]*customize[\w]*)\b",
+                          text, re.IGNORECASE):
+        target_vars.add(vm.group(1))
+    target_vars.discard("sitecustomize")
+    target_vars.discard("usercustomize")
+    # Perf (CODEAUDIT SF-3): cap candidate variables and search
+    # ONCE per pattern with every variable alternated, instead of
+    # four whole-text searches per variable (O(vars x bytes) with
+    # a large constant — a 100-var file cost ~2.1 s).
+    capped_vars = sorted(target_vars)[:_SITE_VAR_CAP]
+    if capped_vars:
+        alt = "|".join(re.escape(v) for v in capped_vars)
+        v = rf"(?:{alt})"
+        pats = (
+            # open(VAR, 'w'/'a') — VAR as a variable, never as
+            # text inside a quoted string.
+            rf"\bopen\s*\(\s*(?:Path\s*\(\s*)?(?<![\"']){v}\b[^)]*"
+            rf"{_SITE_OPEN_WRITE_TAIL_RE.pattern}",
+            # open(VAR).write(...)
+            rf"\bopen\s*\(\s*(?:Path\s*\(\s*)?(?<![\"']){v}\b[^)]*\)"
+            rf"\s*\.\s*write\s*\(",
+            # VAR.write_text(...) / Path(VAR).write_text(...)
+            rf"(?:(?<![\"'])\b{v}\b|Path\s*\(\s*{v}\b[^)]*\))\s*\.\s*"
+            rf"(?:write_text|write_bytes)\s*\(",
+            # shutil copy/move with VAR as a later (destination) arg
+            rf"\bshutil\.(?:copy\w*|move)\s*\([^)]*,\s*"
+            rf"(?:Path\s*\(\s*)?(?<![\"']){v}\b",
+        )
+        if any(re.search(p, text, re.IGNORECASE) for p in pats):
+            return name_lines[0]
+    # The filename itself as a write DESTINATION on one line:
+    # an anchored write (open-for-write, redirect, tee, copy/move
+    # destination, write_text receiver, writeFileSync target).
+    for i in name_lines:
+        ln = judged_lines[i - 1]
+        if _anchored_write(ln, _SITE_NAME_PATH_PAT):
+            return i
+    return None
+# (Fix wave 3: the old _FILE_WRITE_VERB_RE — "any write verb
+# anywhere in the file" — was the weak linkage behind the P6/P8
+# false BLOCKs and is gone. The shared write-verb list now lives
+# in _anchored_write, destination-bound, and includes the target
+# platforms' own verbs: Windows copy/xcopy/robocopy, PowerShell
+# Set-Content/Add-Content/Out-File/New-Item, a single `>`
+# redirect, and JS writeFileSync/writeFile.)
+
+# --- P6: Windows Startup folder --------------------------------------------
+# Priced form: the Startup path itself, with a write verb in the same
+# file (the pricing's folder evidence is drops into the folder). A
+# bare mention with no write anywhere in the file does not fire.
+
+_STARTUP_PATH_RE = re.compile(
+    r"(Start Menu[\\/]+Programs[\\/]+Startup|shell:startup)",
+    re.IGNORECASE)
+_STARTUP_PATH_PAT = (
+    r"(?:(?:[^\s\"'`,;|&]*?[\\/])?Start Menu[\\/]+Programs[\\/]+"
+    r"Startup|shell:startup)(?:[\\/]+[^\s\"'`,;|&]*)?")
+
+_STARTUP_ASSIGN_RE = re.compile(
+    r"^\s*\$?[\"']?([A-Za-z_][\w]*)[\"']?\s*[:=](?![=])\s*(.*)$")
+
+
+def _startup_write_line(judged_lines: list[str], doc: bool) -> int | None:
+    """First line to anchor a STARTUP_FOLDER_WRITE finding on, or
+    None (fix wave 3). Three destination-bound arms:
+      1. the Startup path on a line that writes TO it (the shared
+         anchored-write helper);
+      2. the path inside a continuation-joined statement (a
+         multi-line copy call whose destination argument wraps
+         onto its own line) that writes to it;
+      3. a variable bound to the Startup path (an assignment or
+         config value carrying it, or a *startup*-named variable)
+         used as a write destination in the file — open-for-write,
+         write_text, a shutil copy/move destination, makedirs.
+    An auditor (path constant + listdir + a report written to a
+    DIFFERENT file) and a disabler (the path variable as a move
+    SOURCE) match no arm."""
+    path_lines: list[int] = []
+    for i, ln in enumerate(judged_lines):
+        if doc and NEGATION_RE.search(ln):
+            continue
+        if _STARTUP_PATH_RE.search(ln):
+            path_lines.append(i + 1)
+            if _anchored_write(ln, _STARTUP_PATH_PAT):
+                return i + 1
+    if not path_lines:
+        return None
+    # Arm 2: paren-balanced joined statements (bounded).
+    i = 0
+    while i < len(judged_lines):
+        depth = 0
+        j = i
+        parts: list[str] = []
+        while j < len(judged_lines) and j - i < 6:
+            parts.append(judged_lines[j])
+            depth += judged_lines[j].count("(") \
+                - judged_lines[j].count(")")
+            j += 1
+            if depth <= 0:
+                break
+        stmt = " ".join(parts)
+        if _STARTUP_PATH_RE.search(stmt) \
+                and _anchored_write(stmt, _STARTUP_PATH_PAT):
+            for k in range(i, j):
+                if _STARTUP_PATH_RE.search(judged_lines[k]):
+                    return k + 1
+        i = j if j > i else i + 1
+    # Arm 3: variable linkage, with the one-hop derivation the
+    # other arms use: a variable assigned FROM a path variable
+    # (Path(startup_dir) / "system.bat"), a loop variable over a
+    # path collection, or a dict value reached by its key all
+    # carry the path.
+    path_vars: set[str] = set()
+    for ln in judged_lines:
+        am = _STARTUP_ASSIGN_RE.match(ln)
+        if am and _STARTUP_PATH_RE.search(am.group(2)):
+            path_vars.add(am.group(1))
+    text = "\n".join(judged_lines)
+    for vm in re.finditer(r"\b([A-Za-z_][\w]*startup[\w]*)\b",
+                          text, re.IGNORECASE):
+        path_vars.add(vm.group(1))
+    if not path_vars:
+        return None
+    for _hop in range(2):
+        grown = set(path_vars)
+        for ln in judged_lines:
+            am = _STARTUP_ASSIGN_RE.match(ln)
+            if am and am.group(1) not in grown and any(
+                    re.search(r"\b" + re.escape(v) + r"\b",
+                              am.group(2)) for v in path_vars):
+                grown.add(am.group(1))
+        for fm in re.finditer(r"\bfor\s+([A-Za-z_][\w]*)\s+in\s+"
+                              r"([^\n:]+):", text):
+            if any(re.search(r"\b" + re.escape(v) + r"\b",
+                             fm.group(2)) for v in path_vars):
+                grown.add(fm.group(1))
+        if grown == path_vars:
+            break
+        path_vars = grown
+    alt = "|".join(re.escape(v)
+                   for v in sorted(path_vars)[:_SITE_VAR_CAP])
+    v = rf"(?:{alt})"
+    pats = (
+        # The variable must appear as a variable — not as text
+        # inside a quoted string (an auditor's report file named
+        # 'startup-report.txt' is not the STARTUP variable): the
+        # segment before it carries no quote, and it is not
+        # quote-preceded.
+        rf"\bopen\s*\([^)\"']{{0,160}}?(?<![\"'])\b{v}\b"
+        rf"[^)]{{0,160}}?[\"'][wa][\"']",
+        rf"\bopen\s*\(\s*(?:Path\s*\(\s*|os\.path\.join\s*\(\s*)?"
+        rf"(?<![\"']){v}\b[^)]*\)\s*\.\s*write\s*\(",
+        rf"(?:(?<![\"'])\b{v}\b|Path\s*\(\s*{v}\b[^)]*\))\s*\.\s*"
+        rf"(?:write_text|write_bytes)\s*\(",
+        rf"\bshutil\.(?:copy\w*|move)\s*\([^)]*,\s*"
+        rf"(?:Path\s*\(\s*|os\.path\.join\s*\(\s*)?"
+        rf"(?<![\"']){v}\b",
+        rf"\bmakedirs\s*\(\s*(?:os\.path\.join\s*\(\s*)?"
+        rf"(?<![\"']){v}\b",
+        rf"(?<![\"'])\b{v}\b\s*\.\s*mkdir\s*\(",
+        # A git clone whose destination argument is the path
+        # variable (command or argv-list form, possibly wrapped).
+        rf"\bclone\b[^;|&]{{0,200}}?(?<![\"']){v}\b",
+    )
+    if any(re.search(p, text, re.IGNORECASE) for p in pats):
+        return path_lines[0]
+    return None
+
+
+# --- P1: Registry Run / RunOnce write ---------------------------------------
+# Doubled backslashes are normalised before matching (a Python string
+# literal "HKCU\\Software\\...\\Run" is the same key as the single-
+# backslash form). A WRITE context is required: reg add, a PowerShell
+# property cmdlet, a registry-API value write, or a .reg file carrying
+# values under a Run-key header. Reads (reg query, Get-ItemProperty,
+# a forensics tool's printkey) match none of these and never fire.
+
+_RUNKEY_PATH_PAT = (
+    r"(?:Software[\\/]+Microsoft[\\/]+Windows[\\/]+)?"
+    r"CurrentVersion[\\/]+Run(?:Once)?\b")
+_RUNKEY_PATH_RE = re.compile(_RUNKEY_PATH_PAT, re.IGNORECASE)
+# Fix wave 3 (FPHUNTER §9): the write verbs are split by what they
+# DO. SET verbs write a value (the priced harm). CreateKey(Ex)
+# merely opens/creates a key — a delete-only manager opens the
+# key with it purely to call DeleteValue, and must not fire.
+# Delete verbs remove values/keys and never count as writes.
+_RUNKEY_SET_LINE_RE = re.compile(
+    r"\b(?:reg(?:\.exe)?\s+add|Set-ItemProperty|New-ItemProperty|"
+    r"SetValue(?:Ex)?|RegSetValue(?:Ex)?)\b", re.IGNORECASE)
+_RUNKEY_WRITE_LINE_RE = _RUNKEY_SET_LINE_RE
+_RUNKEY_HEADER_RE = re.compile(
+    r"\[\s*(?:HKEY_CURRENT_USER|HKEY_LOCAL_MACHINE|HKCU|HKLM)"
+    r"[^\]]*CurrentVersion[\\/]+Run(?:Once)?\b[^\]]*\]", re.IGNORECASE)
+_REG_VALUE_LINE_RE = re.compile(r"^\s*(?:@|\"[^\"]+\")\s*=")
+# A .reg value line whose right-hand side is a bare `-` DELETES
+# the value — a cleanup file, not an install (F5a).
+_REG_DELETE_VALUE_RE = re.compile(r"^\s*(?:@|\"[^\"]+\")\s*=\s*-\s*$")
+_RUNKEY_ASSIGN_RE = re.compile(
+    r"^\s*\$?([A-Za-z_][\w]*)\s*(?::[^=\n]+)?=(?![=])\s*(.*)$")
+_RUNKEY_HANDLE_RE = re.compile(
+    r"^\s*\$?([A-Za-z_][\w]*)\s*(?::[^=\n]+)?=(?![=])\s*"
+    r"[^=\n]*?(?:OpenKey|CreateKey)(?:Ex)?\s*\((.*)$", re.IGNORECASE)
+# A SET verb in actual call shape (parenthesised API call or a
+# cmdlet invocation) — as opposed to a bare indicator string in
+# a data list, which has neither parentheses nor arguments.
+_RUNKEY_CALL_SHAPE_RE = re.compile(
+    r"(?:\.\s*SetValue(?:Ex)?\s*\(|RegSetValue(?:Ex)?\s*\(|"
+    r"\bSet-ItemProperty\s+|\bNew-ItemProperty\s+)", re.IGNORECASE)
+
+
+def _runkey_fallback_line(judged_lines: list[str]) -> int | None:
+    """Fix wave 3 (F5b/F5c): the file-level fallback, tightened to
+    STATEMENT-level linkage. Before, a Run path anywhere plus a
+    write-API word anywhere in the file fired — two separate
+    indicator strings in a threat-hunt list combined into a
+    phantom write, and a delete-only manager fired via
+    CreateKeyEx. Now a SET verb (see _RUNKEY_SET_LINE_RE) must be
+    linked to the Run path in one of these ways:
+      - the same statement (physical line, or a continuation-
+        joined statement — a trailing ^ or \\ joins the next line);
+      - the SET verb's line uses a variable bound to the Run path
+        (a path constant), or a handle variable opened/created
+        from the Run path or from such a constant.
+    Returns the 1-based line to anchor on, or None."""
+    norm_lines = [ln.replace("\\\\", "\\") for ln in judged_lines]
+    path_vars: set[str] = set()
+    handle_vars: set[str] = set()
+    for ln in norm_lines:
+        am = _RUNKEY_ASSIGN_RE.match(ln)
+        if am and _RUNKEY_PATH_RE.search(am.group(2)):
+            path_vars.add(am.group(1))
+    for ln in norm_lines:
+        hm = _RUNKEY_HANDLE_RE.match(ln)
+        if hm and (_RUNKEY_PATH_RE.search(hm.group(2)) or any(
+                re.search(r"\b" + re.escape(v) + r"\b", hm.group(2))
+                for v in path_vars)):
+            handle_vars.add(hm.group(1))
+    linked_vars = path_vars | handle_vars
+
+    def _uses_linked_var(ln: str) -> bool:
+        return any(re.search(r"\$?\b" + re.escape(v) + r"\b", ln)
+                   for v in linked_vars)
+
+    # Continuation-joined statements first, then single lines.
+    i = 0
+    while i < len(norm_lines):
+        j = i
+        stmt = norm_lines[i]
+        while stmt.rstrip().endswith(("^", "\\")) \
+                and j + 1 < len(norm_lines):
+            j += 1
+            stmt += "\n" + norm_lines[j]
+        if _RUNKEY_SET_LINE_RE.search(stmt) \
+                and (_RUNKEY_PATH_RE.search(stmt)
+                     or _uses_linked_var(stmt)):
+            return i + 1
+        i = j + 1
+    # Priced split form: the Run path is bound to a variable in
+    # the file and a call-shaped SET writes through a handle
+    # (winreg.SetValueEx(k, ...) with the path in a constant).
+    # Bare indicator strings have no call shape and stay quiet.
+    if path_vars:
+        for idx, ln in enumerate(norm_lines):
+            if _RUNKEY_CALL_SHAPE_RE.search(ln):
+                return idx + 1
+    return None
+
+# --- P2: schtasks creation ---------------------------------------------------
+# Priced creation form only: `schtasks /create`. (/run merely runs an
+# existing task and /change edits one; the task priced for this wave
+# is the creation command — see BUILD_NOTE.)
+
+_SCHTASKS_CREATE_RE = re.compile(r"\bschtasks(?:\.exe)?\s+/create\b",
+                                 re.IGNORECASE)
+
+# --- R2 / R2b: stratum endpoints and miner binaries --------------------------
+
+_STRATUM_RE = re.compile(r"stratum2?\+(?:tcp|ssl|tls)://", re.IGNORECASE)
+_MINER_NAME_RE = re.compile(
+    r"\b(?:xmrig|minerd|cpuminer(?:-opt)?|ethminer|nbminer|cgminer)\b",
+    re.IGNORECASE)
+_MINER_CONTEXT_RE = re.compile(
+    r"(stratum|\bpool\b|curl|wget|chmod|https?://)", re.IGNORECASE)
+# Fix wave 3 (F7): MINER_BINARY_CONTEXT re-priced in a targeted
+# form and REPLACED. The wave-1/2 file-level context form (miner
+# name anywhere + stratum/pool/curl/wget/chmod/any-URL anywhere in
+# the file) BLOCKed every realistic detector, explainer and
+# IR-removal tool (FPHUNTER §10). The targeted form requires, in
+# ONE statement (line): the miner name in command/delivery
+# position — a command-head invocation with arguments, a
+# download/extract/chmod+x delivery line, a release URL naming
+# the binary — or the name (or a name-carrying identifier such
+# as XMRIG_EXECUTABLE) beside a pool endpoint (a stratum URL, or
+# a host:port in -o / --url / pool / url position). Priced before
+# building (see FIX3_NOTE): keeps 25 of the 29 wave-2 gains and
+# 66 of 79 carrying folders, with zero trips on MSB benign and
+# zero on benign-code; the hunter's explainer / detector /
+# IR-removal fixtures do not fire under it.
+_MINER_PAT = r"(?:xmrig|minerd|cpuminer(?:-opt)?|ethminer|nbminer|cgminer)"
+_MINER_HEAD_RE = re.compile(
+    r"(?:^|[;&|]\s*|\|\s*|&&\s*|\bexec\s+|\bExecStart\s*=\s*|"
+    r"\bcommand\s*=\s*|/TR\s+\"?[^\"]*?|\bargs\s*=\s*\[?\s*[\"'])"
+    r"\s*(?:sudo\s+)?(?:[\"']?(?:\./|/[\w.\-]+/)*)"
+    + _MINER_PAT + r"(?:-[\d][\w.\-]*)?\b[\"']?\s+[^\s]",
+    re.IGNORECASE)
+_MINER_DELIVERY_RE = re.compile(
+    r"\b(?:wget|curl|tar\s+[^;|&]*?x|unzip|"
+    r"chmod\s+(?:\+x|7[0-7]{2}|a\+x))\b[^;|&\n]*" + _MINER_PAT,
+    re.IGNORECASE)
+_MINER_DELIVERY2_RE = re.compile(
+    _MINER_PAT + r"[^;|&\n]*\b(?:wget|curl)\b", re.IGNORECASE)
+_MINER_URL_DELIVERY_RE = re.compile(
+    r"https?://[^\s\"']*" + _MINER_PAT, re.IGNORECASE)
+_MINER_ENDPOINT_RE = re.compile(
+    r"(?:stratum\+(?:tcp|ssl|tls)://|"
+    r"(?:-o|--url|pool|\"url\"|'url'|url\s*=|endpoint)"
+    r"[^\n]{0,80}?\S+:\d{2,5}\b)", re.IGNORECASE)
+_MINER_ENDPOINT_NAMED_RE = re.compile(
+    _MINER_PAT + r"[\w]*[^\n]{0,80}?(?:-o\s+\S+:\d{2,5}\b|stratum\+)",
+    re.IGNORECASE)
+
+
+def _miner_targeted_line(line: str) -> bool:
+    """One statement of the targeted miner form (see above)."""
+    if _MINER_URL_DELIVERY_RE.search(line):
+        return True
+    if not _MINER_NAME_RE.search(line):
+        # A name-carrying identifier (XMRIG_EXECUTABLE) counts
+        # only beside a pool endpoint in the same statement.
+        return bool(_MINER_ENDPOINT_NAMED_RE.search(line)
+                    and re.search(_MINER_PAT, line, re.IGNORECASE))
+    return bool(_MINER_HEAD_RE.search(line)
+                or _MINER_DELIVERY_RE.search(line)
+                or _MINER_DELIVERY2_RE.search(line)
+                or _MINER_ENDPOINT_RE.search(line))
+
+# --- E2c: PowerShell remote execution ----------------------------------------
+# Fix wave 3 (F6): the sub-forms are aligned to the product's
+# existing severity matrix for remote-fetch-execute analogues,
+# extracted from scanner.py (see FIX3_NOTE for the full matrix):
+#
+#   surface                     shell analogue        tier
+#   --------------------------  --------------------  ------
+#   script file (.sh/.ps1/.js)  CURL_PIPE_BASH in a   BLOCK
+#                               script; DOWNLOAD_AND_
+#                               RUN in a .js file
+#   Markdown fence (any         CURL_PIPE_BASH line   CAUTION
+#   language, in a doc file)    rules are doc-capped;
+#                               PROSE_PIPE_INSTRUCTION
+#                               and PROSE_FETCH_EXECUTE
+#                               are caution-only
+#   Markdown prose line         PROSE_* fetch/pipe    CAUTION
+#                               rules
+#   fetch with NO execution     NETWORK_ACCESS /      CAUTION
+#   linkage (any surface)       RUNTIME_PACKAGE_INSTALL  tier at
+#                               most — never BLOCK from
+#                               this rule
+#
+# So EVERY POWERSHELL_REMOTE_EXEC sub-form now takes BLOCK only
+# on non-doc surfaces and CAUTION (severity-capped) in docs —
+# fix wave 2's split covered only the pipe form, which left the
+# parenthesised and DownloadString forms BLOCKing vendor install
+# docs that are the exact analogues of the Apollo one-liner.
+# And a bare DownloadString / DownloadData with no execution
+# linkage no longer fires this rule anywhere: WebClient string /
+# byte downloads are the standard .NET way to READ a URL (version
+# files, XML feeds, API data). Execution linkage means: the
+# download call sits inside an iex / Invoke-Expression expression
+# on the same line; or the variable it is assigned to is later
+# passed to iex; or (DownloadData) the variable it is assigned
+# to — or a one-hop alias of it — is the argument of an assembly
+# load. An assembly load of UNRELATED bytes (a local DLL read
+# from disk) no longer pairs with a download in the same file.
+
+_PS_DOWNLOADSTRING_RE = re.compile(r"\bDownloadString\s*\(", re.IGNORECASE)
+_PS_DOWNLOADDATA_RE = re.compile(r"\bDownloadData\s*\(", re.IGNORECASE)
+_PS_ASSEMBLY_LOAD_RE = re.compile(
+    r"(?:Assembly\s*::\s*Load|Reflection\.Assembly|Assembly\.Load)\b",
+    re.IGNORECASE)
+_PS_IEX_ANY_RE = re.compile(r"\b(?:iex|Invoke-Expression)\b", re.IGNORECASE)
+# Fix wave 3 (REDTEAM): `irm` (the standard Invoke-RestMethod
+# alias) joins both web sides, and the PowerShell `curl`/`wget`
+# aliases join the pipe form's web side — same forms, same
+# surface matrix.
+_PS_IEX_WEB_RE = re.compile(
+    r"\b(?:iex|Invoke-Expression)\s*\(?\s*\(?\s*"
+    r"(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|curl|wget)\b",
+    re.IGNORECASE)
+_PS_WEB_PIPE_IEX_RE = re.compile(
+    r"\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|curl|wget)\b"
+    r"[^\n]*\|\s*(?:iex|Invoke-Expression)\b", re.IGNORECASE)
+_PS_DOWNLOAD_ASSIGN_RE = re.compile(
+    r"\$([A-Za-z_][\w]*)\s*=\s*[^;\n]*?Download(?:String|Data)\s*\(",
+    re.IGNORECASE)
+_PS_VAR_ASSIGN_RE = re.compile(
+    r"\$([A-Za-z_][\w]*)\s*=\s*([^;\n]+)", re.IGNORECASE)
+
+
+def _ps_linked_download_lines(judged_lines: list[str]) -> set[int]:
+    """1-based lines whose DownloadString/DownloadData call is
+    EXECUTION-LINKED (see the E2c note above). Bare downloads —
+    the version checker, the feed reader — return no lines."""
+    linked: set[int] = set()
+    dl_vars: dict[str, int] = {}  # var -> download line
+    for idx, ln in enumerate(judged_lines):
+        if _PS_DOWNLOADSTRING_RE.search(ln) \
+                or _PS_DOWNLOADDATA_RE.search(ln):
+            if _PS_IEX_ANY_RE.search(ln):
+                linked.add(idx + 1)
+            m = _PS_DOWNLOAD_ASSIGN_RE.search(ln)
+            if m:
+                dl_vars[m.group(1).lower()] = idx + 1
+    if not dl_vars:
+        return linked
+    # One-hop aliases of download variables ($a = $bytes):
+    # alias name -> the download line it derives from.
+    alias_src: dict[str, int] = {}
+    for ln in judged_lines:
+        m = _PS_VAR_ASSIGN_RE.search(ln)
+        if m and m.group(1).lower() not in dl_vars:
+            for v, dl_line in dl_vars.items():
+                if re.search(r"\$" + re.escape(v) + r"\b",
+                             m.group(2), re.IGNORECASE):
+                    alias_src[m.group(1).lower()] = dl_line
+    for idx, ln in enumerate(judged_lines):
+        if _PS_IEX_ANY_RE.search(ln):
+            for v, dl_line in dl_vars.items():
+                if re.search(r"\$" + re.escape(v) + r"\b", ln,
+                             re.IGNORECASE):
+                    linked.add(dl_line)
+        if _PS_ASSEMBLY_LOAD_RE.search(ln):
+            for v, dl_line in dl_vars.items():
+                if re.search(r"\$" + re.escape(v) + r"\b", ln,
+                             re.IGNORECASE):
+                    linked.add(dl_line)
+            for v, dl_line in alias_src.items():
+                if re.search(r"\$" + re.escape(v) + r"\b", ln,
+                             re.IGNORECASE):
+                    linked.add(dl_line)
+    return linked
+
+# --- R3: dd disk/device fill — REMOVED in fix wave 3 (F8) --------
+# Coordinator decision: `dd if=/dev/zero of=<file>` is a dual-use
+# primitive — creating blank disk images, swap files, LUKS
+# keyfiles, random test data and wiping a drive you own are
+# syntactically identical to the priced disk-fill form, and the
+# FP-hunter's five mainstream honest uses all BLOCKed. The priced
+# yield was 3 folders and no deterministic separator exists, so
+# the rule, its matcher and its BLOCK fixtures were removed (the
+# fixtures survive in run_gapwave_tests.py as negative
+# documentation). Device destruction shapes remain covered by
+# the pre-existing rules that priced them (RM_RF family /
+# HOME_OR_SYSTEM_WRITE), not by a dd-specific BLOCK.
+
+
+def _gapwave_findings(rel: str, path: Path, judged_lines: list[str],
+                      orig_lines: list[str], doc: bool, add) -> None:
+    """Run every gap-wave matcher over one file. judged_lines are the
+    caller's judged surface (shell files variable-expanded, code
+    comments blanked — the same surface the line rules judge);
+    orig_lines supply the stored evidence. Documentation lines that
+    warn against a shape (the line pass's NEGATION_RE discipline) are
+    skipped, as in the line pass."""
+    text = "\n".join(judged_lines)
+    # File-level co-occurrence shapes: first matching line, found
+    # with one whole-text search each — but only after a cheap
+    # substring prescreen on one lowercase copy of the text, and the
+    # file-level write-verb search runs only when a shape actually
+    # needs it. Unconditional whole-text regex searches over every
+    # file cost measurable time on anchor-dense files (the v06fix
+    # timing fixtures). The Run-key search runs on the
+    # backslash-normalised text, whose line structure the
+    # normalisation preserves.
+    low_text = text.lower()
+    norm_text = text.replace("\\\\", "\\")
+
+    def _first_line(pat: re.Pattern, txt: str) -> int | None:
+        m = pat.search(txt)
+        return txt[:m.start()].count("\n") + 1 if m else None
+
+    miner_name_present = any(n in low_text for n in
+                             ("xmrig", "minerd", "cpuminer",
+                              "ethminer", "nbminer", "cgminer"))
+    site_line = None  # P8 is judged at emission time (fix wave 2).
+    runkey_line = _first_line(_RUNKEY_PATH_RE, norm_text) \
+        if "urrentversion" in low_text else None
+    # F4b: a sudoers path-write counts only when the same file
+    # carries grant content (a full-grammar grant line or a
+    # security-weakening Defaults) — a Defaults-only drop-in
+    # write (timeouts, pwfeedback) grants nobody anything.
+    sudoers_grant_content = False
+    if "/etc/sudoers" in text:
+        sudoers_grant_content = any(
+            _GRANT_LINE_RE.search(ln) or _WEAK_DEFAULTS_RE.search(ln)
+            for ln in judged_lines)
+    # E2c: execution-linked download lines, computed once per file.
+    ps_linked = _ps_linked_download_lines(judged_lines) \
+        if "download" in low_text else set()
+
+    in_reg_runkey = False
+
+    for idx, raw in enumerate(judged_lines):
+        lineno = idx + 1
+        line = raw[:MAX_LINE_CHARS]
+        if doc and NEGATION_RE.search(line):
+            continue
+        evidence = orig_lines[idx] if idx < len(orig_lines) else raw
+        # One lowercase copy per line, shared by every gate below
+        # (repeated .lower() calls and ungated regex searches were
+        # measurable on anchor-dense files — v06fix timing fixtures).
+        low = line.lower()
+
+        # S1 — install from a bare public IPv4 host.
+        if "install" in low or "yarn" in low or "npm" in low \
+                or "pnpm" in low or "bun" in low or "pip" in low:
+            if _bare_ip_install_hit(line):
+                add("INSTALL_FROM_BARE_IP", rel, lineno, evidence)
+
+        # V2-strict — setuid / setgid chmod.
+        if "chmod" in low or "install" in low:
+            if any(p.search(line) for p in _SETUID_PATTERNS):
+                add("SETUID_CHMOD", rel, lineno, evidence)
+
+        # V1 + V1b — full-grammar NOPASSWD grant line, OR an
+        # anchored (destination-bound) write to the sudoers path
+        # in a file that carries grant content (F4).
+        if ("opasswd" in low and _NOPASSWD_RE.search(line)) \
+                or ("/etc/sudoers" in line and sudoers_grant_content
+                    and _anchored_write(line, _SUDOERS_PATH_PAT)):
+            add("SUDOERS_GRANT", rel, lineno, evidence)
+
+        # V4 — sudo / wheel group grant.
+        if ("usermod" in low or "gpasswd" in low or "adduser" in low
+                or "useradd" in low) \
+                and any(p.search(line) for p in _SUDO_GROUP_PATTERNS):
+            add("SUDO_GROUP_GRANT", rel, lineno, evidence)
+
+        # P2 — schtasks /create.
+        if "schtasks" in low and _SCHTASKS_CREATE_RE.search(line):
+            add("SCHTASKS_CREATE", rel, lineno, evidence)
+
+        # P4 — anchored cron-path write, or a crontab install form.
+        if ("/cron" in low and _anchored_write(line, _CRON_PATH_PAT)) \
+                or ("crontab" in low and _crontab_install_hit(line)):
+            add("CRON_PATH_WRITE", rel, lineno, evidence)
+
+        # R2 — stratum endpoint.
+        if "stratum" in low and _STRATUM_RE.search(line):
+            add("STRATUM_ENDPOINT", rel, lineno, evidence)
+
+        # E2c — PowerShell remote execution, doctrine-aligned
+        # (fix wave 3, F6): every sub-form BLOCKs on script
+        # surfaces and is CAUTION-capped in docs, exactly like
+        # its shell analogues; a download counts only when it is
+        # execution-linked (inside an iex expression, or its
+        # assigned variable reaches iex / an assembly load).
+        if "ownload" in low or "iex" in low \
+                or "nvoke-expression" in low or "iwr" in low \
+                or "irm" in low:
+            if _PS_IEX_WEB_RE.search(line) \
+                    or _PS_WEB_PIPE_IEX_RE.search(line) \
+                    or lineno in ps_linked:
+                add("POWERSHELL_REMOTE_EXEC", rel, lineno, evidence,
+                    severity_cap="caution" if doc else None)
+
+        # P1 — Registry Run-key write (backslash-normalised line).
+        if "urrentversion" in low:
+            norm = line.replace("\\\\", "\\")
+            if _RUNKEY_PATH_RE.search(norm) \
+                    and _RUNKEY_WRITE_LINE_RE.search(norm):
+                add("REGISTRY_RUN_WRITE", rel, lineno, evidence)
+        if path.suffix.lower() == ".reg":
+            norm = line.replace("\\\\", "\\")
+            if _RUNKEY_HEADER_RE.search(norm):
+                in_reg_runkey = True
+            elif norm.lstrip().startswith("["):
+                in_reg_runkey = False
+            elif in_reg_runkey and _REG_VALUE_LINE_RE.match(norm) \
+                    and not _REG_DELETE_VALUE_RE.match(norm):
+                add("REGISTRY_RUN_WRITE", rel, lineno, evidence)
+
+    # R2b — miner binary in command/delivery position, or beside
+    # a pool endpoint in the same statement (fix wave 3 targeted
+    # form — see _miner_targeted_line). A bare name, a detector's
+    # signature list, and a removal tool's target all stay quiet.
+    if miner_name_present:
+        for idx, ln in enumerate(judged_lines):
+            if doc and NEGATION_RE.search(ln):
+                continue
+            if _miner_targeted_line(ln[:MAX_LINE_CHARS]):
+                add("MINER_BINARY_CONTEXT", rel, idx + 1,
+                    orig_lines[idx]
+                    if idx < len(orig_lines) else "")
+                break
+
+    # P8 — sitecustomize into site-packages: the priced FILE-LEVEL
+    # form (location context + write-target linkage in one file;
+    # see _sitecustomize_write_line). A mere read/mention never
+    # fires — the write linkage is mandatory.
+    if "customize" in low_text:
+        site_line = _sitecustomize_write_line(judged_lines)
+    if site_line is not None:
+        add("SITECUSTOMIZE_WRITE", rel, site_line,
+            orig_lines[site_line - 1]
+            if site_line - 1 < len(orig_lines) else "")
+
+    # P6 — Startup-folder write, destination-bound (fix wave 3):
+    # the path must be the write's own target/destination — on
+    # its line, in its joined statement, or via a variable bound
+    # to it used as a write destination (see _startup_write_line).
+    # An auditor that lists the folder and writes its own report,
+    # and a disabler that moves an item OUT, no longer fire.
+    if "startup" in low_text:
+        su_line = _startup_write_line(judged_lines, doc)
+        if su_line is not None:
+            add("STARTUP_FOLDER_WRITE", rel, su_line,
+                orig_lines[su_line - 1]
+                if su_line - 1 < len(orig_lines) else "")
+
+    # P1 fallback — a registry SET verb statement-linked to the
+    # Run path (fix wave 3: same statement, or via a path/handle
+    # variable — see _runkey_fallback_line). Unlinked co-occurrence
+    # in one file no longer fires, and delete-only registry use
+    # (CreateKeyEx + DeleteValue, no SET verb) never fires.
+    if runkey_line is not None:
+        fb_line = _runkey_fallback_line(judged_lines)
+        if fb_line is not None:
+            add("REGISTRY_RUN_WRITE", rel, fb_line,
+                orig_lines[fb_line - 1]
+                if fb_line - 1 < len(orig_lines) else "")
+
+    # (The wave-1/2 E2c DownloadData fallback — any DownloadData
+    # plus any assembly load in the file — is gone: fix wave 3
+    # requires the loaded assembly to derive from the downloaded
+    # bytes; that linkage is judged per line by
+    # _ps_linked_download_lines and emitted in the line loop.)
+
+
+# --------------------------------------------------------------------------
 # Main scan
 # --------------------------------------------------------------------------
 
@@ -10299,6 +11304,7 @@ def scan_folder(root: Path) -> ScanResult:
                                    string_spans)
             _fixwave_findings(rel, path, lines, rule_lines, doc, add,
                               suffix)
+            _gapwave_findings(rel, path, rule_lines, lines, doc, add)
             if suffix in (".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"):
                 # Comment-blanked text: a fetch word in a comment is
                 # not fetch evidence (audit F5).

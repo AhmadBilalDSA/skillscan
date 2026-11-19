@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Measured results — SkillScan by RakTikoo</title>
-<meta name="description" content="SkillScan's own measured detection and false-block rates on the public MaliciousSkillBench corpus, run 2026-11-15: 49.7% of malicious skills blocked, zero false blocks on 2,235 benign skills — and the misses, published alongside.">
+<meta name="description" content="SkillScan's own measured detection and false-block rates on the public MaliciousSkillBench corpus, run 2026-11-19: 54.16% of malicious skills blocked (4,019 of 7,421), zero false blocks on 2,235 benign skills — and the misses, published alongside.">
 <style>
   body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; color: #1a1a1a; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
   h1 { font-size: 1.7rem; line-height: 1.25; }
@@ -32,8 +32,8 @@ methodology, counting rules and caveats are in the repo's
 
 <p>The corpus is <strong>MaliciousSkillBench</strong> — 9,740 labelled
 skills: 7,505 malicious, 2,235 benign. First run 2026-11-11 with
-SkillScan v0.6.0; re-run <strong>2026-11-15</strong> with the current
-tree (64 deterministic rules) — the figures below are that run, made
+SkillScan v0.6.0; re-run <strong>2026-11-19</strong> with the current
+tree (76 deterministic rules) — the figures below are that run, made
 with the deterministic offline mode only (no <code>--llm</code>).
 Malicious skills were scanned as complete extracted folders; benign
 skills are shipped by the benchmark as frozen text, so each was scanned
@@ -42,35 +42,54 @@ were read as text only.</p>
 
 <table>
   <tr><th>Set</th><th>Skills</th><th>BLOCK</th><th>CAUTION</th><th>PASS</th></tr>
-  <tr><td>Malicious</td><td>7,421</td><td><strong>49.7%</strong> (3,689)</td><td>32.7% (2,427)</td><td>17.6% (1,305)</td></tr>
+  <tr><td>Malicious</td><td>7,421</td><td><strong>54.16%</strong> (4,019)</td><td>28.3% (2,097)</td><td>17.6% (1,305)</td></tr>
   <tr><td>Benign</td><td>2,235</td><td>0% false BLOCKs (0)</td><td>24.7% (551)</td><td>75.3% (1,684)</td></tr>
 </table>
 
-<p>Detection at BLOCK+CAUTION (flagged at any severity): <strong>82.4%</strong>
+<p>Detection at BLOCK+CAUTION (flagged at any severity): <strong>82.41%</strong>
 (6,116 of 7,421) of malicious skills; 24.7% of benign skills were flagged
 at any severity, all as CAUTION. Median scan time was ~106 ms per
 malicious skill (p95 ~600 ms) and ~44 ms per benign skill.</p>
 
 <h2>Detection by attack family</h2>
 
-<p>Multi-label membership; BLOCK / BLOCK+CAUTION, from the 2026-11-15 run.
+<p>Multi-label membership; BLOCK / BLOCK+CAUTION, from the 2026-11-19 run.
 The weak families are left in:</p>
 
 <table>
   <tr><th>Family</th><th>Skills</th><th>BLOCK</th><th>BLOCK+CAUTION</th></tr>
-  <tr><td>Privilege / tool-authority abuse</td><td>1,004</td><td>78.2%</td><td>99.4%</td></tr>
-  <tr><td>Execution / code delivery</td><td>3,205</td><td>79.2%</td><td>97.9%</td></tr>
-  <tr><td>Credential access</td><td>197</td><td>54.3%</td><td>95.9%</td></tr>
-  <tr><td>Persistence / control</td><td>249</td><td>55.4%</td><td>90.0%</td></tr>
-  <tr><td>Instruction / goal manipulation</td><td>1,560</td><td>70.4%</td><td>86.2%</td></tr>
-  <tr><td>Data exfiltration / disclosure</td><td>266</td><td>35.0%</td><td>83.8%</td></tr>
-  <tr><td>Resource / availability abuse</td><td>330</td><td>41.5%</td><td>90.3%</td></tr>
-  <tr><td>Dependency / supply chain</td><td>167</td><td>14.4%</td><td>87.4%</td></tr>
+  <tr><td>Privilege / tool-authority abuse</td><td>1,004</td><td>88.5%</td><td>99.4%</td></tr>
+  <tr><td>Execution / code delivery</td><td>3,205</td><td>83.1%</td><td>97.9%</td></tr>
+  <tr><td>Credential access</td><td>197</td><td>55.3%</td><td>95.9%</td></tr>
+  <tr><td>Persistence / control</td><td>249</td><td>68.3%</td><td>90.0%</td></tr>
+  <tr><td>Instruction / goal manipulation</td><td>1,560</td><td>72.1%</td><td>86.2%</td></tr>
+  <tr><td>Data exfiltration / disclosure</td><td>266</td><td>35.3%</td><td>83.8%</td></tr>
+  <tr><td>Resource / availability abuse</td><td>330</td><td>46.4%</td><td>90.3%</td></tr>
+  <tr><td>Dependency / supply chain</td><td>167</td><td>77.2%</td><td>87.4%</td></tr>
   <tr><td>Defense evasion / obfuscation</td><td>20</td><td>10.0%</td><td>100%</td></tr>
   <tr><td>Integrity / output manipulation</td><td>97</td><td>2.1%</td><td>28.9%</td></tr>
-  <tr><td>Discovery / reconnaissance</td><td>5</td><td>0.0%</td><td>20.0%</td></tr>
-  <tr><td>(No category assigned)</td><td>2,591</td><td>26.8%</td><td>67.5%</td></tr>
+  <tr><td>Discovery / reconnaissance</td><td>5</td><td>20.0%</td><td>20.0%</td></tr>
+  <tr><td>(No category assigned)</td><td>2,591</td><td>30.3%</td><td>67.5%</td></tr>
 </table>
+
+<h2>What moved in the 2026-11-19 run</h2>
+
+<p>Twelve new deterministic BLOCK rules (the gap wave). Every shape was
+priced against the malicious and benign corpora before it was built —
+zero trips on either benign corpus was the gate. 330 malicious skills
+moved from CAUTION to BLOCK, every one attributed to a new rule;
+BLOCK+CAUTION did not move (82.41%), because every gain upgraded a
+skill that was already flagged. The dependency / supply-chain family's
+BLOCK rate rose from 14.4% to 77.2%. Benign verdicts are identical to
+the previous run (0 false BLOCKs; 551 CAUTION / 1,684 PASS).</p>
+
+<p>Priced and <strong>not</strong> built: unpinned named-registry installs
+(the shape trips 380 benign corpus skills — ordinary setup — so they
+stay CAUTION), unpinned VCS dependencies, plain-http named-host
+installs, custom package indexes and download-then-execute chains.
+One built rule was removed after adversarial review: <code>dd</code>
+disk-fill is syntactically identical in its honest uses (disk images,
+swap files, LUKS keyfiles), so no deterministic separator exists.</p>
 
 <h2>What moved in the 2026-11-15 run</h2>
 

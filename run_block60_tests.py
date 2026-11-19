@@ -1311,7 +1311,7 @@ def main() -> int:
     from skillscan.rules import RULES, RULES_BY_ID, FILE_LEVEL_RULE_IDS
     from skillscan.scanner import scan_folder
 
-    check("rule-count-64", len(RULES) == 64, f"{len(RULES)} rules")
+    check("rule-count-76", len(RULES) == 76, f"{len(RULES)} rules")
     for rid in ("DESTRUCTIVE_EXECUTION",
                 "CLAIM_CAPABILITY_CONTRADICTION",
                 "PERSISTENCE_REMOTE_CODE",

@@ -95,6 +95,18 @@ _OWASP_MAP: dict[str, str] = {
     "MCP_DESCRIPTION_INSTRUCTION": "LLM01, MCP04",
     "MCP_DESCRIPTION_POISONING": "LLM01, MCP04",
     "INJECTION_EXECUTION": "LLM06, MCP05",
+    "INSTALL_FROM_BARE_IP": "LLM03, MCP04",
+    "SETUID_CHMOD": "LLM06, MCP05",
+    "SUDOERS_GRANT": "LLM06, MCP05",
+    "SUDO_GROUP_GRANT": "LLM06, MCP05",
+    "SITECUSTOMIZE_WRITE": "LLM06, MCP05",
+    "SCHTASKS_CREATE": "LLM06, MCP05",
+    "CRON_PATH_WRITE": "LLM06, MCP05",
+    "STARTUP_FOLDER_WRITE": "LLM06, MCP05",
+    "REGISTRY_RUN_WRITE": "LLM06, MCP05",
+    "MINER_BINARY_CONTEXT": "LLM06",
+    "STRATUM_ENDPOINT": "LLM06",
+    "POWERSHELL_REMOTE_EXEC": "LLM03, MCP05",
 }
 
 
@@ -740,6 +752,159 @@ RULES: list[Rule] = [
         "compute_promotions for why the set form is parked.)",
         r"(?!)never-matches-line-level",  # promotion pass, scanner.py
     ),
+    # --- Gap wave (2026-11-18): priced deterministic shapes, each ----
+    # BLOCK because the shape itself is the harm. All are dedicated
+    # matchers in scanner.py (_gapwave_findings); the priced forms and
+    # their legitimate twins are recorded in the wave's pricing notes.
+    _rule(
+        "INSTALL_FROM_BARE_IP", "block",
+        "An install command (pip / npm / yarn / apt / brew / gem) takes "
+        "its package from a bare public IP address instead of a named "
+        "registry or mirror — a direct archive URL, or an index / "
+        "registry option pointed at the IP. A bare IP has no registry, "
+        "no name that can be checked, no TLS identity and no versioning "
+        "authority: the installed code is whatever that anonymous host "
+        "serves at install time. Real mirrors and registries have "
+        "hostnames; private, loopback, link-local and shared/CGNAT "
+        "addresses (your own LAN or tailnet infrastructure — only "
+        "globally routable addresses are judged) are not flagged.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "SETUID_CHMOD", "block",
+        "Sets the setuid or setgid bit on a file (chmod with a "
+        "4xxx/2xxx/6xxx/7xxx mode, chmod +s, os.chmod with such a mode, "
+        "or install -m with one). A setuid file runs with its owner's "
+        "privileges whoever launches it — putting that bit on a file a "
+        "skill ships is privilege escalation itself. Ordinary "
+        "executable permissions (chmod +x, 755) are not flagged.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "SUDOERS_GRANT", "block",
+        "Contains a passwordless-sudo grant line in full sudoers "
+        "grammar (a user, a host spec, and NOPASSWD: followed by a "
+        "command spec such as ALL or a path), or writes into "
+        "/etc/sudoers or a file under /etc/sudoers.d in a file that "
+        "carries grant content (a grant line, or a Defaults that "
+        "weakens authentication). Either shape hands out root "
+        "access without a password. A bare NOPASSWD fragment (a "
+        "detector's search string), merely mentioning or reading "
+        "the sudoers path, validating it with visudo -c, copying "
+        "it out for backup, or writing a Defaults-only drop-in "
+        "that grants nobody anything is not flagged.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "SUDO_GROUP_GRANT", "block",
+        "Adds a user to the sudo or wheel group (usermod -aG sudo "
+        "or --append --groups sudo, gpasswd -a … sudo, adduser "
+        "<user> sudo, useradd -G … sudo). Group membership is "
+        "standing root access on the machine, granted silently "
+        "by a skill.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "SITECUSTOMIZE_WRITE", "block",
+        "Writes a sitecustomize.py or usercustomize.py into a "
+        "site-packages / dist-packages directory — the write must "
+        "target that file (an open-for-write, a copy/move into "
+        "place, a variable built from the path and written). "
+        "Python imports that module automatically at every "
+        "interpreter startup, so the file is code that runs "
+        "inside every Python process on the machine — "
+        "interpreter-level persistence. Reading the hook, or "
+        "copying/moving it OUT (backup, quarantine), is not "
+        "flagged.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "SCHTASKS_CREATE", "block",
+        "Creates a Windows scheduled task (schtasks /create). A "
+        "scheduled task is persistence owned by the operating system: "
+        "the payload keeps running on its schedule after the skill "
+        "itself is removed.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "CRON_PATH_WRITE", "block",
+        "Writes into a cron location (/etc/crontab, /etc/cron.d and "
+        "the other /etc/cron.* directories, /var/spool/cron) or "
+        "installs a crontab from a file. Cron entries run unattended "
+        "on a schedule with the owner's privileges — persistence "
+        "outside the skill folder. Merely mentioning or reading a "
+        "cron path is not flagged; the write must be anchored to the "
+        "path itself.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "STARTUP_FOLDER_WRITE", "block",
+        "Writes a file into the Windows Startup folder (Start Menu\\"
+        "Programs\\Startup, or shell:startup) — the folder must be "
+        "the write's own target or destination. Anything placed "
+        "there runs automatically at every sign-in — persistence "
+        "outside the skill folder. Listing the folder, writing a "
+        "report about it, or moving an item OUT of it is not "
+        "flagged.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "REGISTRY_RUN_WRITE", "block",
+        "Writes a value under a Windows Registry Run or RunOnce key "
+        "(HKCU/HKLM …\\CurrentVersion\\Run) — reg add, "
+        "Set-ItemProperty, a registry-API value write linked to "
+        "the key, or a .reg file carrying values for the key. "
+        "Run-key values launch at every sign-in. Reading or "
+        "exporting the key, deleting its values (a .reg line "
+        "\"name\"=-, DeleteValue, a delete-only manager), and "
+        "indicator lists that merely quote the shapes are not "
+        "flagged; a value write is required.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "MINER_BINARY_CONTEXT", "block",
+        "Runs, delivers or configures a known cryptominer binary "
+        "(xmrig, minerd, cpuminer, ethminer, nbminer, cgminer): "
+        "the binary is invoked with arguments, downloaded or "
+        "extracted, fetched from a release URL naming it, or named "
+        "beside a pool endpoint (a stratum URL, or a host:port in "
+        "a -o / pool / url position) in the same statement. The "
+        "machine's CPU is the product being taken. A bare name in "
+        "a detector's signature list, an explainer's prose, or a "
+        "removal tool's target is not flagged.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "STRATUM_ENDPOINT", "block",
+        "References a stratum mining-pool endpoint "
+        "(stratum+tcp://, stratum+ssl:// or stratum+tls://, "
+        "including the stratum2+ spellings). A stratum endpoint "
+        "is a cryptomining pool connection string; it has no "
+        "other use, and its presence means the skill connects "
+        "this machine to a mining pool.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    _rule(
+        "POWERSHELL_REMOTE_EXEC", "block",
+        "PowerShell code fetches remote content and executes it: "
+        "Invoke-Expression (iex) applied to a web request (iwr / "
+        "irm / Invoke-WebRequest / Invoke-RestMethod / curl / "
+        "wget, parenthesised or piped), a DownloadString inside "
+        "an iex expression or whose result reaches iex, or "
+        "DownloadData whose bytes reach an assembly load. The "
+        "executed code is whatever the server sends at run time — "
+        "the PowerShell form of the download-and-run dropper. "
+        "Like its shell analogues, the shape BLOCKs in script "
+        "files and is CAUTION in documentation (vendor install "
+        "one-liners in docs are the analogue of curl | sh in "
+        "docs). A download with no execution linkage — reading a "
+        "version file, a feed, API data — is not flagged.",
+        r"(?!)never-matches-line-level",  # dedicated matcher in scanner.py
+    ),
+    # DD_DISK_FILL was removed in fix wave 3 (dual-use primitive:
+    # blank disk images, swap files, LUKS keyfiles and own-drive
+    # wipes are syntactically identical to the priced form; see
+    # the CHANGELOG and FIX3_NOTE).
 ]
 
 RULES_BY_ID = {rule.id: rule for rule in RULES}
@@ -762,5 +927,10 @@ FILE_LEVEL_RULE_IDS = {
     "AGENT_CONFIG_WRITE", "AGENT_CREDENTIAL_READ",
     "CLAIM_CONTRADICTED", "CLAIM_EXFIL_CONTRADICTION",
     "INJECTION_EXECUTION", "SSH_CREDENTIAL_READ",
+    "INSTALL_FROM_BARE_IP", "SETUID_CHMOD", "SUDOERS_GRANT",
+    "SUDO_GROUP_GRANT", "SITECUSTOMIZE_WRITE", "SCHTASKS_CREATE",
+    "CRON_PATH_WRITE", "STARTUP_FOLDER_WRITE", "REGISTRY_RUN_WRITE",
+    "MINER_BINARY_CONTEXT", "STRATUM_ENDPOINT",
+    "POWERSHELL_REMOTE_EXEC",
 }
 LINE_RULES = [r for r in RULES if r.id not in FILE_LEVEL_RULE_IDS]
