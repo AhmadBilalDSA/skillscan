@@ -463,6 +463,15 @@ offline-mode numbers and do not change.
   [`docs/AUDIT_COVERAGE.md`](docs/AUDIT_COVERAGE.md) and are
   worked from the daily audit watch.
 
+## Use with an AI agent
+
+This repo ships a [SKILL.md](SKILL.md) written to the Agent Skills open
+standard. If your coding agent supports skills, point it at this repo and
+it can install SkillScan, scan a skill or MCP server folder before you
+install it, and read the verdict for you. The skill works as promised
+when the repo is cloned under its real name (`skillscan`) — the standard
+ties the skill's name to its folder.
+
 ## Toolchain integration
 
 See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
