@@ -1,5 +1,7 @@
 # SkillScan by RakTikoo — scan an AI agent skill or MCP server before you install it
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/RakTikoo/skillscan)
+
 Scan an AI-agent skill or MCP server before you install it.
 
 ![SkillScan scanning two sample skills — a malicious one is BLOCKed, a clean one PASSes](demo.gif)
@@ -158,6 +160,8 @@ were scanned and which were skipped (unreadable, over the 2 MB cap,
 special files like FIFOs, symlinks, binary-looking content). If anything
 suspicious was skipped — or nothing was scanned at all — the verdict
 cannot be a clean PASS (`SCAN_INCOMPLETE`).
+
+**For agent users:** this repository ships a `SKILL.md` for AI agents. Install it with `npx skills add RakTikoo/skillscan`.
 
 ### Exit codes
 
