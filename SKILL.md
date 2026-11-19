@@ -1,6 +1,6 @@
 ---
 name: skillscan
-description: Scan an AI-agent skill or MCP server folder for malicious or risky behaviour before installing it — credential and SSH key reads, data exfiltration, network sends, hidden instructions, obfuscation, and install-time tricks in code, scripts and manifests. Use when asked to scan, vet, audit or check a skill, plugin or MCP server before installing it, when a skill looks suspicious, or when reviewing a SKILL.md someone shared.
+description: Scan an AI-agent skill or MCP server folder for malicious or risky behaviour before installing it — credential and SSH key reads, data exfiltration, network sends, hidden instructions, obfuscation, and install-time tricks in code, scripts and manifests. Use when asked to scan, vet, audit or check a skill, plugin or MCP server before installing it, when a skill looks suspicious, or when reviewing a SKILL.md someone shared. Not for general security review of ordinary code projects, for checking CI workflow files (use ci-command-truth), or for checking package dependencies in a pull request (use phantomdep-pr-gate).
 license: MIT
 compatibility: Requires Python 3.10+ and pip. Installing needs network access to GitHub; scanning itself is fully offline by default and uses only the Python standard library.
 ---

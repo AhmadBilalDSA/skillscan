@@ -1,4 +1,4 @@
-# SkillScan
+# SkillScan — scan an AI agent skill or MCP server before you install it
 
 Scan an AI-agent skill or MCP server before you install it.
 
@@ -17,9 +17,13 @@ findings on top — it can never remove or change them; see
 SkillScan is free and open source (MIT). There is no hosted tier and no
 paid version — the whole tool lives in this repository.
 
+**Install in one step:** `pip install git+https://github.com/RakTikoo/skillscan`
+(Python 3.10+, zero dependencies), then run `skillscan <folder>`.
+Full options are under [Install / usage](#install--usage).
+
 **First contribution?** Start with a [good first issue](https://github.com/RakTikoo/skillscan/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
-## Example
+## What does a scan look like?
 
 ```console
 $ python3 -m skillscan samples/bad/ssh-stealer
