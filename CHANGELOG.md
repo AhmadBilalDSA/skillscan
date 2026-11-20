@@ -4,6 +4,41 @@ All notable changes to SkillScan, newest first. Versions follow the
 scanner's own `__version__`; every release below passed the full test
 suites and an adversarial review before it was pushed.
 
+## v0.10.1 — 2026-11-20
+
+- **CLOUD_METADATA_ACCESS now covers the Alibaba Cloud
+  metadata endpoint, 100.100.100.200.** The malicious MCP
+  package @fdcasj_dfew/md-doc-mcp (MAL-2026-20187, caught by
+  the daily audit watch on 2026-11-19) probes
+  `http://100.100.100.200/latest/meta-data/` for live cloud
+  credentials. The shared `/latest/meta-data/` path already
+  fired, but the bare address was missing from the endpoint
+  list — a reference to the host without that path did not
+  fire. The address is now in `_metadata_pattern()`
+  alongside 169.254.169.254 and 169.254.170.2: the dotted
+  form and the generated hex form (0x646464c8) fire, and
+  combined with an outbound send the folder BLOCKs under
+  CLOUD_METADATA_EXFIL, exactly as for the other endpoints.
+  One form is deliberately NOT matched: the decimal-integer
+  form, 1684301000, is 2023-05-17 in Unix epoch seconds — a
+  constant honest code writes as fixture timestamps, byte
+  counts and IDs (the AWS decimals are 2060 timestamps with
+  no honest habitat). The independent review demonstrated
+  that matching it produced a false BLOCK (an epoch constant
+  in one file plus a browser-profile existence check in
+  another composed into CLOUD_METADATA_EXFIL) and silently
+  downgraded an honest outbound send carrying the value as
+  a query parameter. A decimal-form fetch still cautions
+  via NETWORK_ACCESS, and any metadata path still fires.
+  Priced before shipping: verdict-diff over both benign
+  corpora (392 hand-authored benign-code skills and the
+  2,235 MaliciousSkillBench benign skills) showed zero
+  verdict changes and zero rule-set changes. Fixtures
+  rt3-alibaba-bare / -hex / -decimal-not-metadata /
+  -epoch-no-exfil / -send-not-suppressed in
+  `run_v02_tests.py` pin both the coverage and the
+  deliberate exclusion.
+
 ## v0.10.0 — 2026-11-19
 
 - **Gap wave: thirteen priced deterministic shapes (64 → 77

@@ -136,6 +136,22 @@ above. Stated with the same honesty standard:
   send. Fixtures in `run_v02_tests.py` assert all of these. Limit: an
   endpoint reached via a resolved hostname or a non-standard path can
   still evade the patterns.
+  **Covered (v0.10.1): the Alibaba Cloud metadata endpoint,
+  100.100.100.200.** The @fdcasj_dfew/md-doc-mcp republish
+  (MAL-2026-20187, November 2026) probed
+  `http://100.100.100.200/latest/meta-data/`; the shared path fired,
+  but the bare address was not in the endpoint list, so a host-only
+  reference evaded the rule. The address is now in
+  `_metadata_pattern()` — dotted form plus the generated hex form
+  (0x646464c8) — and fixtures rt3-alibaba-bare / -hex assert the
+  coverage; a verdict-diff over both benign corpora (392
+  benign-code + 2,235 corpus benign) showed zero changes. Stated
+  limit, deliberate: the decimal-integer form (1684301000) is NOT
+  matched for this endpoint — that value is a 2023 Unix timestamp,
+  and the independent review showed matching it false-BLOCKs an
+  honest epoch constant combined with a browser-profile check
+  (and downgrades honest sends carrying it as a parameter). A
+  decimal-form fetch still cautions via NETWORK_ACCESS.
 - **Error / environment leakage into tool results** (ERROR_INFO_LEAK,
   CAUTION) — MCP tool code returning raw exception text, stack traces,
   or environment dumps as tool results (the shape behind CVE-2026-119613,

@@ -119,21 +119,40 @@ def _rule(rule_id: str, severity: str, reason: str, pattern: str) -> Rule:
 def _metadata_pattern() -> str:
     """Cloud metadata endpoints in every cheap textual form: dotted IP,
     decimal-integer IP (2852039166), hex IP (0xa9fea9fe), the AWS IPv6
-    endpoint, the Google hostname, and the well-known paths (including
+    endpoint, the Alibaba Cloud address (100.100.100.200), the Google
+    hostname, and the well-known paths (including
     the IMDSv2 token path /latest/api/token). The integer/hex forms are
-    computed from the dotted constants so they cannot drift apart."""
+    computed from the dotted constants so they cannot drift apart —
+    with one deliberate exception: the Alibaba DECIMAL form is not
+    generated (see the note in the body)."""
     parts = [
         r"169\.254\.169\.254", r"169\.254\.170\.2",
+        r"100\.100\.100\.200",
         r"metadata\.google\.internal", r"metadata\.goog\b",
         r"/latest/meta-data/", r"/latest/api/token",
         r"/computeMetadata/v1/", r"fd00:ec2::254",
     ]
+    for dotted in ("169.254.169.254", "169.254.170.2", "100.100.100.200"):
+        value = 0
+        for octet in dotted.split("."):
+            value = (value << 8) + int(octet)
+        parts.append(rf"0x0*{value:x}\b")      # hex form, all three
     for dotted in ("169.254.169.254", "169.254.170.2"):
         value = 0
         for octet in dotted.split("."):
             value = (value << 8) + int(octet)
-        parts.append(rf"\b{value}\b")          # decimal form
-        parts.append(rf"0x0*{value:x}\b")      # hex form
+        parts.append(rf"\b{value}\b")          # decimal form, AWS only
+    # The Alibaba decimal form (1684301000) is deliberately NOT
+    # generated: that value is 2023-05-17 in Unix epoch seconds — a
+    # constant honest code writes as fixture timestamps, byte counts
+    # and IDs — while the AWS decimals (2852039166, 2852039170) are
+    # 2060 timestamps with no honest habitat. Matching it armed the
+    # CLOUD_METADATA_EXFIL composition into a demonstrated false
+    # BLOCK (an epoch constant plus a browser-profile check) and
+    # suppressed a real outbound send carrying it as a query
+    # parameter (independent review, v0.10.1). The dotted and hex
+    # forms cover the endpoint; a decimal-form fetch still cautions
+    # via NETWORK_ACCESS, and any metadata path still fires above.
     return "(" + "|".join(parts) + ")"
 
 
@@ -374,7 +393,8 @@ RULES: list[Rule] = [
     _rule(
         "CLOUD_METADATA_ACCESS", "caution",
         "References a cloud metadata endpoint (169.254.169.254, "
-        "169.254.170.2, metadata.google.internal, /latest/meta-data/) "
+        "169.254.170.2, 100.100.100.200, metadata.google.internal, "
+        "/latest/meta-data/) "
         "in dotted, decimal-integer, hex, or IPv6 form, or the IMDSv2 "
         "token path. That service hands out temporary cloud credentials "
         "to anything that can reach it, so a skill has almost no "

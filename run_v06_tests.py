@@ -95,7 +95,7 @@ def tier(r, rule: str) -> str | None:
 
 
 print("== registry ==")
-check("version is 0.10.0", __version__ == "0.10.0", __version__)
+check("version is 0.10.1", __version__ == "0.10.1", __version__)
 check("76 rules registered", len(_RULE_LIST) == 76,      str(len(_RULE_LIST)))
 for rid in sorted(NEW_RULES):
     check(f"{rid} registered as block tier",

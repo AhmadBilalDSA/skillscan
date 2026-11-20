@@ -82,11 +82,11 @@ uv tool install git+https://github.com/RakTikoo/skillscan
 From the release wheel (no git needed):
 
 ```bash
-pip install https://github.com/RakTikoo/skillscan/releases/download/v0.10.0/skillscan-0.10.0-py3-none-any.whl
+pip install https://github.com/RakTikoo/skillscan/releases/download/v0.10.1/skillscan-0.10.1-py3-none-any.whl
 ```
 
 Checksums for the release files are in the `SHA256SUMS` file attached to
-the v0.10.0 release.
+the v0.10.1 release.
 
 With Homebrew (macOS/Linux):
 
@@ -546,7 +546,7 @@ See [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md) for the full guide:
   `verdict` / `exit-code` outputs) runs SkillScan in CI:
 
   ```yaml
-  - uses: RakTikoo/skillscan@v0.10.0
+  - uses: RakTikoo/skillscan@v0.10.1
     with:
       path: ./skills/my-skill        # folder to scan
       fail-on-block: "true"          # default: BLOCK fails the job
@@ -606,7 +606,7 @@ triage metadata only and never affects the verdict.
 | MCP_SERVER_COMMAND | caution | MCP manifest that starts its server via a shell/interpreter/package-runner command |
 | HARDCODED_SECRET_LIVE | block | A credential in an unambiguous live format in the code: AWS key id (`AKIA…`), GitHub token (`ghp_…`, `github_pat_…`), `sk-` API key, Slack token, or a private-key block (placeholders and marked documentation examples are not flagged) |
 | HARDCODED_SECRET_GENERIC | caution | A long, high-entropy literal assigned to a password/secret/token variable (env-var references and obvious placeholders are not flagged) |
-| CLOUD_METADATA_ACCESS | caution | References a cloud metadata endpoint (`169.254.169.254`, `169.254.170.2`, `metadata.google.internal`, `/latest/meta-data/`) — a source of live cloud credentials |
+| CLOUD_METADATA_ACCESS | caution | References a cloud metadata endpoint (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`, `metadata.google.internal`, `/latest/meta-data/`) — a source of live cloud credentials |
 | CLOUD_METADATA_EXFIL | block | Touches a cloud metadata endpoint **and** reads credential material or has a network send channel |
 | BROWSER_CREDENTIAL_STORE | caution | Touches browser/wallet credential storage (`Login Data`, `logins.json`, `key4.db`, `Local State`, browser profile dirs, wallet extension storage); counts as credential material for EXFIL_COMBINATION |
 | REVERSE_SHELL | block | A raw socket wired to a shell (`dup2` of the socket fd, `pty.spawn`, `/dev/tcp`, or spawning `/bin/sh` alongside a socket) |
@@ -1013,10 +1013,11 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2026 RakTikoo.
 
 ## Status
 
-Current release: **v0.10.0** (2026-11-19). It carries the
-gap wave — twelve new deterministic BLOCK rules (76 rules)
-closing the measured supply-chain gap — on top of v0.9.0;
-see the CHANGELOG. SkillScan began as a
+Current release: **v0.10.1** (2026-11-20). It adds the
+Alibaba Cloud metadata endpoint (100.100.100.200) to
+CLOUD_METADATA_ACCESS, on top of v0.10.0's gap wave —
+twelve new deterministic BLOCK rules (76 rules) closing
+the measured supply-chain gap; see the CHANGELOG. SkillScan began as a
 Week 1 spike; every version since has passed the full test
 suites and an independent adversarial review before it was
 pushed. The short history: v0.1–v0.2 built the deterministic
@@ -1054,7 +1055,13 @@ gap wave: twelve priced deterministic rules (76 in all)
 aimed at the families where measurement showed this
 scanner trailing — supply chain above all — each built
 only in a form with no benign trips, and one built rule
-(`dd` disk-fill) removed as dual-use. Expect false positives and false negatives; the
+(`dd` disk-fill) removed as dual-use. v0.10.1 added the
+Alibaba Cloud metadata endpoint (100.100.100.200, dotted
+and hex form) to CLOUD_METADATA_ACCESS — the one endpoint
+the rule's list was missing, probed by a malicious MCP
+package the audit watch caught in November 2026. Its
+decimal-integer form is a live 2023 Unix timestamp and is
+deliberately not matched; see the CHANGELOG. Expect false positives and false negatives; the
 rule set and corpus are a starting point, not a finished
 product. Issues and new evasion samples are welcome — a
 mutation that evades SkillScan is a valuable contribution.

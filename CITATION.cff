@@ -3,8 +3,8 @@ message: "If you use this software, please cite it as below."
 authors:
   - name: RakTikoo
 title: "skillscan: scan an AI agent skill or MCP server before you install it"
-version: 0.10.0
-date-released: 2026-11-19
+version: 0.10.1
+date-released: 2026-11-20
 license: MIT
 url: "https://github.com/RakTikoo/skillscan"
 repository-code: "https://github.com/RakTikoo/skillscan"

@@ -471,6 +471,48 @@ def main() -> int:
                         "print(urllib.request.urlopen(req, timeout=2).read())\n",
         }), verdict="CAUTION", must={"CLOUD_METADATA_ACCESS"})
 
+        # RT3 (v0.10.1): the Alibaba Cloud metadata address. The bare
+        # and hex probes are path-less on purpose — with a metadata
+        # path in the URL the base already fires via the path
+        # alternative, which would not isolate the new forms.
+        expect("rt3-alibaba-bare", fixture("rt3c", {
+            "probe.py": "import urllib.request\n"
+                        "print(urllib.request.urlopen('http://100.100.100.200/', timeout=2).read())\n",
+        }), verdict="CAUTION", must={"CLOUD_METADATA_ACCESS"})
+
+        expect("rt3-alibaba-hex", fixture("rt3e", {
+            "probe.py": "import urllib.request\n"
+                        "print(urllib.request.urlopen('http://0x646464c8/', timeout=2).read())\n",
+        }), verdict="CAUTION", must={"CLOUD_METADATA_ACCESS"})
+
+        # The decimal form (1684301000) is deliberately NOT a metadata
+        # match: it is a 2023 Unix timestamp, a constant honest code
+        # writes. A decimal-form fetch still cautions as a network
+        # fetch, but CLOUD_METADATA_ACCESS must not fire — and the
+        # constant must not arm CLOUD_METADATA_EXFIL next to a
+        # caution-grade credential check (independent review, v0.10.1).
+        expect("rt3-alibaba-decimal-not-metadata", fixture("rt3d", {
+            "probe.py": "import urllib.request\n"
+                        "print(urllib.request.urlopen('http://1684301000/', timeout=2).read())\n",
+        }), verdict="CAUTION",
+            must_not={"CLOUD_METADATA_ACCESS", "CLOUD_METADATA_EXFIL"})
+
+        expect("rt3-alibaba-epoch-no-exfil", fixture("rt3f", {
+            "consts.py": "FIXTURE_EPOCH = 1684301000\n",
+            "profile.py": "from pathlib import Path\n"
+                          "PROFILE = Path.home() / '.config' / 'google-chrome' / 'Default'\n"
+                          "print(PROFILE.exists())\n",
+        }), verdict="CAUTION", must={"BROWSER_CREDENTIAL_STORE"},
+            must_not={"CLOUD_METADATA_ACCESS", "CLOUD_METADATA_EXFIL"})
+
+        # Nor may the constant suppress a real outbound send that
+        # merely carries it as a query parameter.
+        expect("rt3-alibaba-send-not-suppressed", fixture("rt3g", {
+            "report.py": "import requests\n"
+                         "requests.post('https://api.example.invalid/v1/report?t=1684301000', json={'ok': True})\n",
+        }), verdict="BLOCK", must={"NETWORK_SEND_DATA"},
+            must_not={"CLOUD_METADATA_ACCESS", "CLOUD_METADATA_EXFIL"})
+
         # RT4: browser store reached through concatenated path fragments.
         expect("rt4-browser-store-concat", fixture("rt4a", {
             "export.py": "from pathlib import Path\n"
