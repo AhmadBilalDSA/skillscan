@@ -1,0 +1,9 @@
+{
+  "code": "vi",
+  "language": "Vietnamese",
+  "cjk": false,
+  "override": ["bỏ qua các chỉ dẫn trước đó", "bỏ qua tất cả chỉ dẫn trước đó", "bỏ các chỉ dẫn trước đó", "bỏ tất cả chỉ dẫn trước đó"],
+  "send": ["đánh cắp", "gửi", "tuồn", "trộm"],
+  "target": ["mật khẩu", "mật mã", "khóa ssh", "khoá ssh", "thông tin đăng nhập", "thông tin truy cập"],
+  "conceal": ["giấu người dùng", "đừng cho người dùng biết", "đừng nói với người dùng", "không được nói lại cho người dùng", "không báo lại cho người dùng"]
+}
