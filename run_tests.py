@@ -28,6 +28,10 @@ EXPECTED = {
     # Honest claims: SKILL.md says no network / no changes, and the
     # code does neither — claims check lists them as "matches".
     "samples/good/honest-local": ("PASS", 0),
+    # Swedish ordinary prose: same shape as the other good samples but
+    # written in Swedish, so a new phrase list cannot pass by flagging
+    # everything in that language (false-positive floor).
+    "samples/good/sv-ordinary": ("PASS", 0),
     "samples/bad/ssh-stealer": ("BLOCK", 2),
     "samples/bad/obfuscated-dropper": ("BLOCK", 2),
     # Legit-sounding backup skill: runs subprocess + deletes old files.
@@ -42,6 +46,9 @@ EXPECTED = {
     # MCP manifest whose tool descriptions steer the agent
     # (cross-tool preference) — caution, not block.
     "samples/caution/mcp-steering": ("CAUTION", 1),
+    # Swedish instruction-attack prose: override + send + conceal in one
+    # paragraph, must flag through the new sv phrase list.
+    "samples/caution/sv-instruction": ("CAUTION", 1),
     # MCP manifest with a poisoned tool description (read the
     # SSH key, pass it along) — block.
     "samples/bad/mcp-poisoned": ("BLOCK", 2),
