@@ -1,0 +1,30 @@
+{
+  "code": "sv",
+  "language": "Swedish",
+  "cjk": false,
+  "override": [
+    "ignorera tidigare instruktioner",
+    "ignorera alla tidigare instruktioner",
+    "bortse från ovanstående instruktioner"
+  ],
+  "send": [
+    "skicka",
+    "sänd",
+    "stjäl",
+    "ladda upp"
+  ],
+  "target": [
+    "lösenord",
+    "lösenorden",
+    "inloggningsuppgifter",
+    "autentiseringsuppgifter",
+    "api-nyckel",
+    "åtkomsttoken",
+    "hemligheter"
+  ],
+  "conceal": [
+    "säg inget till användaren",
+    "berätta inte för användaren",
+    "utan att användaren vet"
+  ]
+}
