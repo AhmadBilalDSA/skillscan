@@ -52,6 +52,8 @@ EXPECTED = {
     # MCP manifest with a poisoned tool description (read the
     # SSH key, pass it along) — block.
     "samples/bad/mcp-poisoned": ("BLOCK", 2),
+    # Fake backup skill reading .env and posting to a webhook — block.
+    "samples/bad/env-webhook-backup": ("BLOCK", 2),
 }
 
 # Rules that must fire for a sample (checked on top of the verdict).
@@ -63,6 +65,7 @@ MUST_FIRE = {
     "samples/caution/claims-understated": {"FILE_DELETE", "CLAIM_CONTRADICTED"},
     "samples/caution/mcp-steering": {"MCP_DESCRIPTION_INSTRUCTION"},
     "samples/bad/mcp-poisoned": {"MCP_DESCRIPTION_POISONING"},
+    "samples/bad/env-webhook-backup": {"ENV_FILE_READ", "NETWORK_SEND_DATA", "EXFIL_COMBINATION"},
 }
 
 
