@@ -1,0 +1,27 @@
+{
+  "code": "bn",
+  "language": "Bengali",
+  "cjk": false,
+  "override": [
+    "Ignore previous instructions",
+    "Ignore all prior instructions"
+  ],
+  "send": [
+    "Send data",
+    "Upload",
+    "Steal",
+    "Exfiltrate"
+  ],
+  "target": [
+    "Password",
+    "Credential",
+    "Key",
+    "Token",
+    ".ssh"
+  ],
+  "conceal": [
+    "Don't tell the user",
+    "Keep it secret from the user",
+    "Hide from user"
+  ]
+}
